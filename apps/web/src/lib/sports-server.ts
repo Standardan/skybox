@@ -35,6 +35,38 @@ export function getFollowedLeagueAdapters(): SportsAdapter[] {
   return LEAGUES.map((l) => new EspnAdapter(l.id, l.espnSport, l.espnLeague));
 }
 
+/**
+ * Unlike getIptvSnapshot(), this had no caching at all — every single
+ * request that touches sports (home page, /sports, a game detail page)
+ * fetched all 5 ESPN endpoints fresh, every time, with nothing shared
+ * across requests. Combined with D-024's fix always fetching every league
+ * once any team is followed, that meant 5 real network calls on every
+ * home-page load for anyone with a followed team — a real, measurable
+ * contributor to "everything feels slow." A short TTL (game state does
+ * change, just not sub-minute) turns that into at most one fetch per
+ * minute shared across every request and every page, the same shape as
+ * getIptvSnapshot()'s cache.
+ */
+const GAMES_CACHE_TTL_MS = 60 * 1000;
+let gamesCache: { games: Game[]; fetchedAt: number } | null = null;
+let gamesInFlight: Promise<Game[]> | null = null;
+
+async function getAllTodaysGames(): Promise<Game[]> {
+  if (gamesCache && Date.now() - gamesCache.fetchedAt < GAMES_CACHE_TTL_MS) return gamesCache.games;
+  if (gamesInFlight) return gamesInFlight;
+
+  const adapters = getFollowedLeagueAdapters();
+  gamesInFlight = getTodaysGames(adapters, adapters.map((a) => a.league))
+    .then((games) => {
+      gamesCache = { games, fetchedAt: Date.now() };
+      return games;
+    })
+    .finally(() => {
+      gamesInFlight = null;
+    });
+  return gamesInFlight;
+}
+
 export interface TeamSearchResult {
   name: string;
   league: string;
@@ -122,10 +154,7 @@ export async function getTodaysMatchedGames(): Promise<Game[]> {
   if (!config.sports.enabled) return [];
   if (config.sports.leagues.length === 0 && config.sports.teams.length === 0) return [];
 
-  const adapters = getFollowedLeagueAdapters();
-  const leaguesToFetch =
-    config.sports.teams.length > 0 ? adapters.map((a) => a.league) : config.sports.leagues;
-  const games = await getTodaysGames(adapters, leaguesToFetch);
+  const games = await getAllTodaysGames();
   if (games.length === 0) return [];
 
   const { channels, epgStore } = await getIptvSnapshot();

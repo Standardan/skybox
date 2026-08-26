@@ -1,8 +1,8 @@
 import { notFound, redirect } from "next/navigation";
-import { getMeta, aggregateStreams } from "@skybox/core/addon-client";
+import { aggregateStreams } from "@skybox/core/addon-client";
 import { findItem } from "@skybox/core/library";
 import type { MediaType, StremioMeta, StremioVideo } from "@skybox/core/shared";
-import { getCinemetaAddon, getStreamAddons } from "@/lib/addon-server";
+import { getCinemetaAddon, getStreamAddons, getCachedMeta } from "@/lib/addon-server";
 import { cinemetaBackgroundUrl } from "@/lib/cinemeta";
 import { readConfig } from "@/lib/config-store";
 import { readLibrary } from "@/lib/library-store";
@@ -43,7 +43,7 @@ export default async function TitlePage({
 
   let meta: StremioMeta;
   try {
-    meta = await getMeta(cinemeta, type, id);
+    meta = await getCachedMeta(cinemeta, type, id);
   } catch {
     notFound();
   }

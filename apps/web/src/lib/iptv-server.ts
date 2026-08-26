@@ -59,12 +59,20 @@ async function fetchEpgXml(baseUrl: string, username: string, password: string):
  */
 async function fetchEpgFromAnyMirror(baseUrls: string[], username: string, password: string): Promise<InMemoryEpgStore> {
   const store = new InMemoryEpgStore();
-  const settled = await Promise.allSettled(baseUrls.map((baseUrl) => fetchEpgXml(baseUrl, username, password)));
-  const firstSuccess = settled.find((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled");
-  if (firstSuccess) {
+  // Promise.any, not allSettled: allSettled only resolves once EVERY mirror
+  // has either answered or hit its own 8s timeout, so with a dozen
+  // candidates and only a couple actually alive, this used to block for
+  // the full timeout window regardless of how fast the working ones
+  // responded — the real reason a "cache miss" Live TV/home-page load
+  // could take several seconds even though a good mirror answered
+  // instantly. Promise.any resolves the moment any one succeeds.
+  try {
+    const xml = await Promise.any(baseUrls.map((baseUrl) => fetchEpgXml(baseUrl, username, password)));
     // EPG coverage is known to be spotty for some providers (docs/08-OPEN-QUESTIONS.md
     // OQ-14) — an empty store just means now/next shows nothing, not a crash.
-    store.addProgrammes(parseXmltv(firstSuccess.value));
+    store.addProgrammes(parseXmltv(xml));
+  } catch {
+    // Every mirror failed — same "nothing to show" degradation as above.
   }
   return store;
 }

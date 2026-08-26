@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { getMeta } from "@skybox/core/addon-client";
 import { getContinueWatching } from "@skybox/core/library";
 import type { AddonRef, Game } from "@skybox/core/shared";
 import { TopNav } from "@/components/TopNav";
@@ -7,7 +6,7 @@ import { Hero } from "@/components/Hero";
 import { Rail } from "@/components/Rail";
 import { MediaCard, type MediaCardGame } from "@/components/MediaCard";
 import { PosterCardLink } from "@/components/PosterCardLink";
-import { getCinemetaAddon, getCachedCatalog } from "@/lib/addon-server";
+import { getCinemetaAddon, getCachedCatalog, getCachedMeta } from "@/lib/addon-server";
 import { cinemetaPosterUrl, cinemetaBackgroundUrl } from "@/lib/cinemeta";
 import { getTodaysMatchedGames } from "@/lib/sports-server";
 import { getIptvSnapshot } from "@/lib/iptv-server";
@@ -80,7 +79,7 @@ async function loadContinueWatching(cinemeta: AddonRef, userId: string): Promise
     items.map(async (item): Promise<ContinueWatchingCard | null> => {
       if (!item.progress) return null;
       try {
-        const meta = await getMeta(cinemeta, item.type, item.metaId);
+        const meta = await getCachedMeta(cinemeta, item.type, item.metaId);
         const resumeVideo = item.progress.videoId !== item.metaId ? `?video=${item.progress.videoId}` : "";
         return {
           id: item.metaId,

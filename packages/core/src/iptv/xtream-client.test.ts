@@ -211,6 +211,30 @@ describe("XtreamClient mirror failover", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("resolves as soon as the first mirror succeeds, without waiting for a slower one to also settle", async () => {
+    // Real bug this guards against: an earlier implementation used
+    // Promise.allSettled, which only resolves once EVERY candidate has
+    // settled -- so even though "good" answers instantly, the call still
+    // sat blocked until "slow" (or a dead mirror's full timeout) also
+    // finished. never-resolving in the test proves the difference: this
+    // must resolve without ever needing "slow" to answer at all.
+    let slowResolve: (() => void) | null = null;
+    const slow = new Promise<Response>((resolve) => {
+      slowResolve = () => resolve(jsonResponse({ user_info: { auth: 1 } }));
+    });
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("http://good.example")) return Promise.resolve(jsonResponse({ user_info: { auth: 1 } }));
+      if (url.startsWith("http://dead1.example")) return slow; // never resolves during this test
+      return Promise.reject(new TypeError("fetch failed"));
+    });
+
+    const client = new XtreamClient(mirrorCredentials);
+    await expect(client.validate()).resolves.toBe(true);
+    expect(client.getActiveBaseUrl()).toBe("http://good.example");
+    // Cleanup so the still-pending "slow" promise doesn't leak into the next test.
+    slowResolve!();
+  });
+
   it("tries only the last-known-good mirror on the next call (no re-racing dead ones)", async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith("http://good.example")) {

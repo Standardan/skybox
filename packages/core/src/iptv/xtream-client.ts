@@ -130,15 +130,24 @@ export class XtreamClient implements IptvClient {
       throw new MirrorFailoverError(label, baseUrls, causes);
     }
 
-    const settled = await Promise.allSettled(remaining.map(async (baseUrl) => ({ baseUrl, value: await attempt(baseUrl) })));
-    for (const outcome of settled) {
-      if (outcome.status === "fulfilled") {
-        this.lastWorkingBaseUrl = outcome.value.baseUrl;
-        return outcome.value.value;
-      }
-      causes.push(outcome.reason);
+    // Promise.any, not allSettled: allSettled only ever resolves once EVERY
+    // candidate has either succeeded or hit its own MIRROR_TIMEOUT_MS — so
+    // with a dozen dead mirrors and one healthy one, a request that could
+    // have come back in 50ms instead sat blocked for the full timeout
+    // window regardless, since nothing short-circuited on the first
+    // success. Promise.any resolves the instant any candidate succeeds
+    // (only rejecting, with every cause bundled into an AggregateError, if
+    // they all fail) — this is the actual "take the first success" the
+    // comment above always described.
+    try {
+      const winner = await Promise.any(remaining.map(async (baseUrl) => ({ baseUrl, value: await attempt(baseUrl) })));
+      this.lastWorkingBaseUrl = winner.baseUrl;
+      return winner.value;
+    } catch (err) {
+      if (err instanceof AggregateError) causes.push(...err.errors);
+      else causes.push(err);
+      throw new MirrorFailoverError(label, baseUrls, causes);
     }
-    throw new MirrorFailoverError(label, baseUrls, causes);
   }
 
   private fetchOptions(): FetchJsonOptions {
