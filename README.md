@@ -186,7 +186,15 @@ Wait about 30 seconds (Caddy is fetching a free, real certificate for your domai
 
 3. When Coolify asks how to build it, choose **Dockerfile** — Skybox already has one at the root of the repo, so there's nothing to configure here.
 
-4. **Add persistent storage before your first deploy.** This step matters — skipping it means every redeploy wipes your accounts and watch history. In the resource's **Storage** (or **Persistent Storage**) panel, add a volume with the **Destination Path** set to `/data`. Coolify handles the host side of this itself; you don't need to type a source path.
+4. **Add persistent storage before your first deploy.** This step matters — skipping it means every redeploy destroys the container and starts a brand new empty one, wiping your admin account, everyone else's accounts, watch history, and all your debrid/IPTV/sports settings. Skybox keeps all of that in one folder inside the container, `/data`, and by default Docker containers don't keep anything outside of what's baked into the image — so without a mount, `/data` resets to empty on every redeploy.
+
+   Open the resource's **Storage** (or **Persistent Storage**) panel and click **+ Add**. Coolify will ask what kind of mount you want — here's what each option actually does, and which one you want:
+
+   - **Volume Mount** — *use this one.* Coolify creates and manages a Docker volume for you; you never have to think about where it physically lives on the server. Fill in a **Name** (anything, e.g. `skybox-data`) and set **Destination Path** to `/data`. Leave everything else blank/default. This is the simplest option and the one used throughout the rest of this guide.
+   - **Directory Mount** — an alternative if you specifically want the data files sitting in a folder you can browse or back up yourself on the server's own disk. Set **Source Path** to an absolute folder on the host, e.g. `/data/skybox` (Coolify creates it if it doesn't exist), and **Destination Path** to `/data`. Functionally equivalent to Volume Mount — pick this only if "I want to `ls` the files myself over SSH" matters to you.
+   - **File Mount** and **Host File Mount** — *don't use these here.* Both map a single individual file into the container, not a folder. Skybox writes several files into `/data` (accounts, config, watch history, the learned sports channel matches), so a single-file mount can't hold them — pick Volume Mount or Directory Mount instead.
+
+   Either way, the **Destination Path must be exactly `/data`** — that's the path Skybox is already configured to read and write from inside the container, so nothing else needs to change to match it.
 
 5. **Set up your domain.** In the resource's **Domains** (or **FQDN**) field, either paste your own domain (same DNS A-record step as Step 6 above — point it at your server's IP), or use the free auto-generated address Coolify offers if you don't have one yet. Coolify issues the HTTPS certificate for this automatically.
 
