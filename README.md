@@ -81,6 +81,11 @@ Other devices on the same network can then reach it at `http://<your-computer's-
 
 This is the recommended path if more than one person or device will use Skybox. It uses **Docker**, which packages Skybox with everything it needs so you don't have to install Node.js, pnpm, or anything else on the server by hand.
 
+> **Using Coolify (or a similar self-hosted PaaS) instead of plain Docker Compose?** The steps below still get the code onto your server, but a few things work differently:
+> - Don't enable Skybox's own `--profile https` (Caddy) — Coolify runs its own reverse proxy (Traefik) that already handles domains and HTTPS. Running both fights over the same ports.
+> - Coolify usually doesn't publish container ports straight to the server's IP the way plain `docker compose up` does — so `http://your-server-ip:3000` typically won't work, and that's expected, not a bug. Instead, use the **Domains**/**FQDN** field in that service's Coolify settings; if you don't have your own domain yet, Coolify can often generate a free working one for you there (something like `yourapp.<your-server-ip>.sslip.io`).
+> - If something on the server already uses port 3000, set `SKYBOX_PORT` in Coolify's own environment-variables UI for the service (see "Something else on the server already uses port 3000" in Troubleshooting) — though once you're accessing Skybox via a Coolify domain, this setting isn't actually in the request path anymore, so it's rarely the fix you need.
+
 ### Step 1 — Get a server
 
 You need a **VPS** (Virtual Private Server) — a small computer, rented by the month, that lives in a data center and stays on all the time. Any of these work well and are beginner-friendly:
