@@ -35,6 +35,23 @@ export class RealDebridClient implements DebridClient {
     return pollForToken(deviceCode, { ...options, clientId: this.clientId });
   }
 
+  /**
+   * Fallback to a pasted private API token (from real-debrid.com/apitoken)
+   * instead of the device-code flow. Real-Debrid's `/oauth/v2/device/code`
+   * endpoint has been observed rejecting requests from datacenter/VPS IP
+   * ranges with a plain 404 (confirmed: identical request succeeds from a
+   * residential/non-hosting IP, fails from a Hetzner VPS) — this gives
+   * anyone hitting that with no code change needed on their end. A private
+   * token authenticates identically to an OAuth access token (same
+   * `Authorization: Bearer` header, see getAccountStatus/torrents.ts) and
+   * doesn't expire, so no refreshToken/expiresAt/clientId is needed here.
+   */
+  async connectWithApiKey(apiKey: string): Promise<DebridAuth> {
+    const auth: DebridAuth = { provider: "real-debrid", accessToken: apiKey };
+    await this.getAccountStatus(auth);
+    return auth;
+  }
+
   /** Extra helper beyond the DebridClient interface: refresh an expiring token. */
   async refreshAccessToken(auth: DebridAuth): Promise<DebridAuth> {
     return refreshAccessToken(auth);

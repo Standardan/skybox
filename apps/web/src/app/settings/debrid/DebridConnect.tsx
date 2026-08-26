@@ -10,8 +10,28 @@ interface DebridConnectProps {
   initialProvider: DebridProviderId | null;
 }
 
-const PROVIDERS: Array<{ id: DebridProviderId; label: string; authMethod: "device" | "apikey"; keyHint: string }> = [
-  { id: "real-debrid", label: "Real-Debrid", authMethod: "device", keyHint: "" },
+const PROVIDERS: Array<{
+  id: DebridProviderId;
+  label: string;
+  authMethod: "device" | "apikey";
+  keyHint: string;
+  /**
+   * Real-Debrid's device-code step has been observed getting rejected
+   * (404) when it comes from a datacenter/VPS IP, even though the same
+   * request works fine from a residential connection — an anti-abuse
+   * measure on their end. A pasted private API token (real-debrid.com/
+   * apitoken) authenticates identically and sidesteps that endpoint
+   * entirely, so it's offered as a fallback alongside the normal flow.
+   */
+  apiKeyFallback?: boolean;
+}> = [
+  {
+    id: "real-debrid",
+    label: "Real-Debrid",
+    authMethod: "device",
+    keyHint: "Found at real-debrid.com/apitoken — use this if the normal connect button fails, which can happen when Skybox runs on a VPS.",
+    apiKeyFallback: true,
+  },
   { id: "alldebrid", label: "AllDebrid", authMethod: "device", keyHint: "" },
   { id: "premiumize", label: "Premiumize", authMethod: "apikey", keyHint: "Found under My Account on premiumize.me" },
   { id: "torbox", label: "TorBox", authMethod: "apikey", keyHint: "Found under Settings → API Key on torbox.app" },
@@ -113,6 +133,11 @@ export function DebridConnect({ initialAccount, initialProvider }: DebridConnect
   function cancelWaiting(device: DeviceInfo) {
     abortRef.current?.abort();
     setFlow({ phase: "showing-code", device });
+  }
+
+  function enterKeyManually(chosen: DebridProviderId) {
+    setProvider(chosen);
+    setFlow({ phase: "entering-key" });
   }
 
   async function connectWithKey(apiKey: string) {
@@ -256,11 +281,18 @@ export function DebridConnect({ initialAccount, initialProvider }: DebridConnect
         </p>
       ) : null}
       <p className={styles.fieldLabel}>Choose your debrid provider</p>
-      <div className={styles.row} style={{ marginTop: "var(--space-3)" }}>
+      <div style={{ marginTop: "var(--space-3)", display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         {PROVIDERS.map((p) => (
-          <button key={p.id} type="button" className={styles.buttonPrimary} onClick={() => startConnect(p.id)}>
-            Connect {p.label}
-          </button>
+          <div key={p.id} className={styles.row} style={{ alignItems: "baseline" }}>
+            <button type="button" className={styles.buttonPrimary} onClick={() => startConnect(p.id)}>
+              Connect {p.label}
+            </button>
+            {p.apiKeyFallback ? (
+              <button type="button" className={styles.buttonGhost} onClick={() => enterKeyManually(p.id)}>
+                or paste an API token instead
+              </button>
+            ) : null}
+          </div>
         ))}
       </div>
     </section>

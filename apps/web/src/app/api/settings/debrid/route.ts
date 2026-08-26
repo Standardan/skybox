@@ -48,10 +48,15 @@ export async function POST(request: Request) {
       // generic message below. `docker logs`/your platform's log viewer
       // will now show the actual cause (network/DNS/timeout/provider error).
       console.error(`[debrid connect] getAuthUrl failed for ${provider}:`, err);
-      return NextResponse.json(
-        { error: "Could not start the connection. Try again in a moment." },
-        { status: 502 },
-      );
+      // Confirmed real-world case: Real-Debrid's device-code endpoint 404s
+      // when the request comes from a datacenter/VPS IP (identical request
+      // succeeds from a residential IP) — an anti-abuse measure on their
+      // end, not something retrying fixes. Point at the API-token fallback
+      // instead of just saying "try again," which is actively wrong here.
+      const hint = client.connectWithApiKey
+        ? " If you're running this on a VPS, this provider's device-code step sometimes gets blocked from datacenter IPs — try \"Paste an API token instead\" below."
+        : " Try again in a moment.";
+      return NextResponse.json({ error: `Could not start the connection.${hint}` }, { status: 502 });
     }
   }
 

@@ -61,6 +61,26 @@ describe("RealDebridClient", () => {
     expect(status.type).toBe("premium");
   });
 
+  it("connectWithApiKey() verifies the key via GET /user and returns a bearer-token DebridAuth", async () => {
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    mockFetch.mockResolvedValueOnce(jsonResponse({ id: 1, username: "dan", premium: 3600 }));
+
+    const client = new RealDebridClient();
+    const auth = await client.connectWithApiKey("my-private-token");
+
+    expect(mockFetch.mock.calls[0]![0]).toBe(`${RD_REST_BASE}/user`);
+    expect(mockFetch.mock.calls[0]![1]?.headers).toMatchObject({ Authorization: "Bearer my-private-token" });
+    expect(auth).toEqual({ provider: "real-debrid", accessToken: "my-private-token" });
+  });
+
+  it("connectWithApiKey() throws on an invalid key rather than returning it", async () => {
+    const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: "bad_token" }, 401));
+
+    const client = new RealDebridClient();
+    await expect(client.connectWithApiKey("nope")).rejects.toThrow();
+  });
+
   it("refreshAccessToken() (extra helper) delegates to the oauth refresh flow", async () => {
     const mockFetch = fetch as unknown as ReturnType<typeof vi.fn>;
     mockFetch.mockResolvedValueOnce(

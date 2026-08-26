@@ -254,6 +254,7 @@ This adds one more small container whose only job is applying updates when you c
 - **HTTPS/certificate errors right after Step 7.** Give DNS a bit longer to propagate (see Step 6), then re-run `docker compose --profile https up -d`. Caddy retries automatically.
 - **Forgot the admin password.** On the server, run `nano data/users.json`, find the account's entry, and delete its whole `{ ... }` block from the list (careful to keep the surrounding `[` and `]` and commas valid), save (Ctrl+O, Enter, Ctrl+X), then `docker compose restart skybox`. If that was the only account, Skybox will show the first-run setup screen again on next visit.
 - **A live channel won't play, or feels slow to load a channel list.** Some IPTV providers are simply unreliable moment to moment — try a different channel, or wait and retry. This isn't unique to Skybox.
+- **"Could not start the connection" when connecting Real-Debrid, on a VPS.** Real-Debrid's device-code sign-in (the "Connect Real-Debrid" button) has been observed rejecting requests from datacenter/VPS IP addresses — confirmed: the exact same request succeeds from a home connection and fails from a Hetzner server. This is Real-Debrid's own anti-abuse behavior, not something a Skybox update fixes. Use **"or paste an API token instead"** right next to that button: grab your token from [real-debrid.com/apitoken](https://real-debrid.com/apitoken) (log in first) and paste it there — it connects the same account without going through the step that's getting blocked.
 
 ## Design decisions
 
