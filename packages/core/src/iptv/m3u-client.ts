@@ -83,7 +83,7 @@ export class M3uClient implements IptvClient {
         name: entry.tvgName || entry.displayName,
         logo: entry.tvgLogo,
         category,
-        streamUrl: entry.streamUrl,
+        streamUrls: [entry.streamUrl],
         streamFormat: detectStreamFormat(entry.streamUrl),
         epgChannelId: entry.tvgId,
       });

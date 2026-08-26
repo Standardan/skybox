@@ -110,7 +110,7 @@ describe("M3uClient", () => {
         name: "News HD",
         logo: "http://cdn.example.com/news.png",
         category: "News",
-        streamUrl: "http://stream.example.com/live/news/index.m3u8",
+        streamUrls: ["http://stream.example.com/live/news/index.m3u8"],
         streamFormat: "hls",
         epgChannelId: "news.us",
       });

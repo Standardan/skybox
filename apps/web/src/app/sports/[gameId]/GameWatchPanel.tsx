@@ -9,7 +9,7 @@ export interface ChannelMatchView {
   channelId: string;
   channelName: string;
   channelLogo?: string;
-  streamUrl: string;
+  streamUrls: string[];
   streamFormat: "hls" | "ts" | "unknown";
   confidence: number;
   reason: "network" | "epg-title" | "manual-override" | "team-history";
@@ -48,15 +48,38 @@ export function GameWatchPanel({
   awayTeam: string;
 }) {
   const [watching, setWatching] = useState<ChannelMatchView | null>(null);
+  // Which of watching.streamUrls (candidate mirrors) is currently playing —
+  // a channel that failed to resolve/play on one mirror often works fine
+  // on another (docs/07-DECISIONS.md: mirrors aren't uniformly reliable for
+  // actually serving streams even when they answer the API fine), so a
+  // failure here retries down the list before giving up on the channel
+  // entirely, same idea as PlaybackControls' multi-source retry for VOD.
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const [unavailable, setUnavailable] = useState<string | null>(null);
   // No automatic match is a dead end otherwise — open the search right away
   // so finding the real channel doesn't need an extra click first.
   const [pickerOpen, setPickerOpen] = useState(matches.length === 0);
+
+  function watch(match: ChannelMatchView) {
+    setUnavailable(null);
+    setSourceIndex(0);
+    setWatching(match);
+  }
+
+  function handleSourceFailed() {
+    if (watching && sourceIndex + 1 < watching.streamUrls.length) {
+      setSourceIndex((i) => i + 1);
+      return;
+    }
+    setUnavailable(watching ? `${watching.channelName} is unavailable right now. Try a different channel below.` : null);
+    setWatching(null);
+  }
 
   if (watching) {
     return (
       <div className={styles.playerWrap}>
         <Player
-          source={{ url: watching.streamUrl, format: toPlayerFormat(watching.streamFormat) }}
+          source={{ url: watching.streamUrls[sourceIndex]!, format: toPlayerFormat(watching.streamFormat) }}
           title={title}
           live={{
             channelName: watching.channelName,
@@ -66,6 +89,7 @@ export function GameWatchPanel({
             onChannelDown: () => {},
           }}
           onClose={() => setWatching(null)}
+          onSourceFailed={handleSourceFailed}
         />
       </div>
     );
@@ -73,6 +97,11 @@ export function GameWatchPanel({
 
   return (
     <div className={styles.panel}>
+      {unavailable && (
+        <p className={styles.empty} role="alert">
+          {unavailable}
+        </p>
+      )}
       {matches.length === 0 ? (
         <p className={styles.empty}>
           No automatic match yet — search below. Once you pick the right channel, it&rsquo;s remembered for every
@@ -88,7 +117,7 @@ export function GameWatchPanel({
                   {REASON_LABEL[m.reason]} &middot; {Math.round(m.confidence * 100)}% match
                 </span>
               </div>
-              <button type="button" className={styles.watchButton} onClick={() => setWatching(m)}>
+              <button type="button" className={styles.watchButton} onClick={() => watch(m)}>
                 Watch on {m.channelName}
               </button>
             </li>
@@ -114,11 +143,11 @@ export function GameWatchPanel({
           teamNames={[homeTeam, awayTeam]}
           onSaved={(channel: OverrideChannel) => {
             setPickerOpen(false);
-            setWatching({
+            watch({
               channelId: channel.id,
               channelName: channel.name,
               channelLogo: channel.logo,
-              streamUrl: channel.streamUrl,
+              streamUrls: channel.streamUrls,
               streamFormat: channel.streamFormat,
               confidence: 1,
               reason: "manual-override",

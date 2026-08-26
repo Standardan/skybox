@@ -104,7 +104,7 @@ describe("XtreamClient (single mirror)", () => {
   });
 
   describe("getChannels", () => {
-    it("maps fields, builds streamUrl, sets streamFormat hls, and filters hidden categories", async () => {
+    it("maps fields, builds streamUrls, sets streamFormat hls, and filters hidden categories", async () => {
       fetchMock.mockResolvedValueOnce(
         jsonResponse([
           {
@@ -134,7 +134,7 @@ describe("XtreamClient (single mirror)", () => {
         name: "News HD",
         logo: "http://example.com/logo.png",
         category: "1",
-        streamUrl: "http://example.com:8080/live/user1/pass1/101.m3u8",
+        streamUrls: ["http://example.com:8080/live/user1/pass1/101.m3u8"],
         streamFormat: "hls",
         epgChannelId: "news.us",
       });
@@ -244,6 +244,28 @@ describe("XtreamClient mirror failover", () => {
       expect((err as MirrorFailoverError).baseUrls).toEqual(mirrorCredentials.baseUrls);
       expect((err as MirrorFailoverError).causes.length).toBeGreaterThan(0);
     }
+  });
+
+  it("getChannels() lists every configured mirror in streamUrls, the one that answered first", async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("http://good.example")) {
+        return Promise.resolve(jsonResponse([{ stream_id: 55, name: "News HD" }]));
+      }
+      return Promise.reject(new TypeError("fetch failed"));
+    });
+
+    const client = new XtreamClient(mirrorCredentials);
+    const channels = await client.getChannels();
+
+    // Same order as baseUrls' declaration, but re-anchored so the mirror
+    // that actually answered leads — a mirror reliable for the API isn't
+    // necessarily reliable for serving the stream itself, so every
+    // candidate needs to be tried, not just this one.
+    expect(channels[0]!.streamUrls).toEqual([
+      "http://good.example/live/user1/pass1/55.m3u8",
+      "http://dead1.example/live/user1/pass1/55.m3u8",
+      "http://dead2.example/live/user1/pass1/55.m3u8",
+    ]);
   });
 
   it("throws immediately (before hitting the network) when baseUrls is empty", () => {

@@ -7,7 +7,7 @@ export interface OverrideChannel {
   id: string;
   name: string;
   category: string;
-  streamUrl: string;
+  streamUrls: string[];
   streamFormat: "hls" | "ts" | "unknown";
   logo?: string;
 }

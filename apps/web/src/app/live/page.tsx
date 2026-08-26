@@ -3,7 +3,7 @@ import type { EpgNowNext } from "@skybox/core/shared";
 import { getIptvSnapshot } from "@/lib/iptv-server";
 import { GuideGrid } from "@/components/GuideGrid";
 import { TopNav } from "@/components/TopNav";
-import { isRequestHttps, needsStreamProxy, proxiedStreamUrl } from "@/lib/stream-proxy";
+import { isRequestHttps, resolvePlaybackStreamUrls } from "@/lib/stream-proxy";
 import styles from "./page.module.css";
 
 // This route's IPTV/EPG fetches are already cached at the application layer
@@ -60,7 +60,7 @@ export default async function LiveTvPage() {
   const https = await isRequestHttps();
   const playableChannels = channels.map((channel) => ({
     ...channel,
-    streamUrl: needsStreamProxy(channel.streamUrl, https) ? proxiedStreamUrl(channel.streamUrl) : channel.streamUrl,
+    streamUrls: resolvePlaybackStreamUrls(channel.streamUrls, https),
   }));
 
   return (

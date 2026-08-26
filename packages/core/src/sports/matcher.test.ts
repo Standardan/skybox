@@ -6,7 +6,7 @@ function makeChannel(overrides: Partial<Channel> & { id: string; name: string })
   return {
     providerId: "provider-1",
     category: "Sports",
-    streamUrl: `http://example.com/${overrides.id}`,
+    streamUrls: [`http://example.com/${overrides.id}`],
     streamFormat: "hls",
     ...overrides,
   };

@@ -125,8 +125,16 @@ async function main(): Promise<void> {
   }
 
   if (sample[0]) {
-    console.log(`\nProbing stream reachability for "${sample[0].name}" (bounded, won't download the full stream)...`);
-    console.log(" ", await probeStreamUrl(sample[0].streamUrl));
+    // Every candidate mirror, not just the first — a mirror that answers
+    // the API fine isn't necessarily reliable for actually serving the
+    // stream itself (a real, observed provider failure mode), so this is
+    // the actual diagnostic that would catch it rather than only checking
+    // whichever mirror happened to answer get_live_streams.
+    console.log(`\nProbing stream reachability for "${sample[0].name}" across all ${sample[0].streamUrls.length} mirror(s)...`);
+    for (const url of sample[0].streamUrls) {
+      console.log(` ${url}`);
+      console.log("  ", await probeStreamUrl(url));
+    }
   }
 }
 

@@ -62,6 +62,12 @@ export function GuideGrid({ channels, categories, nowNextByEpgId }: GuideGridPro
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [failureMessage, setFailureMessage] = useState<string | null>(null);
+  // Which of the selected channel's streamUrls (candidate mirrors) is
+  // currently playing — a channel that fails on one mirror often plays
+  // fine on another (mirrors aren't uniformly reliable for actually
+  // serving streams even when they answer the API fine), so a failure
+  // retries down the list before giving up on the channel entirely.
+  const [sourceIndex, setSourceIndex] = useState(0);
   // Starts at a fixed sentinel (never `Date.now()`) so server and client
   // render byte-identical markup on the first pass — computing "now" in a
   // useState initializer runs on both sides at slightly different instants
@@ -111,6 +117,7 @@ export function GuideGrid({ channels, categories, nowNextByEpgId }: GuideGridPro
 
   function selectChannel(channel: Channel) {
     setFailureMessage(null);
+    setSourceIndex(0);
     setSelectedKey(channelKey(channel));
   }
 
@@ -119,10 +126,17 @@ export function GuideGrid({ channels, categories, nowNextByEpgId }: GuideGridPro
     const currentIndex = selectedIndex >= 0 ? selectedIndex : 0;
     const nextIndex = (currentIndex + delta + filteredChannels.length) % filteredChannels.length;
     const nextChannel = filteredChannels[nextIndex];
-    if (nextChannel) setSelectedKey(channelKey(nextChannel));
+    if (nextChannel) {
+      setSourceIndex(0);
+      setSelectedKey(channelKey(nextChannel));
+    }
   }
 
   function handleSourceFailed() {
+    if (selectedChannel && sourceIndex + 1 < selectedChannel.streamUrls.length) {
+      setSourceIndex((i) => i + 1);
+      return;
+    }
     if (selectedChannel) {
       setFailureMessage(`${selectedChannel.name} is unavailable right now. Pick another channel below.`);
     }
@@ -207,7 +221,7 @@ export function GuideGrid({ channels, categories, nowNextByEpgId }: GuideGridPro
       {selectedChannel && (
         <div className={styles.playerOverlay}>
           <Player
-            source={{ url: selectedChannel.streamUrl, format: "hls" }}
+            source={{ url: selectedChannel.streamUrls[sourceIndex]!, format: "hls" }}
             title={selectedChannel.name}
             poster={selectedChannel.logo}
             live={{

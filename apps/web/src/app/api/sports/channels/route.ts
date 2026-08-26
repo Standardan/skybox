@@ -6,7 +6,7 @@
  */
 import { NextResponse } from "next/server";
 import { getIptvSnapshot } from "@/lib/iptv-server";
-import { isRequestHttps, needsStreamProxy, proxiedStreamUrl } from "@/lib/stream-proxy";
+import { isRequestHttps, resolvePlaybackStreamUrls } from "@/lib/stream-proxy";
 
 // See apps/web/src/app/live/page.tsx for why.
 export const fetchCache = "default-no-store";
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
       id: channel.id,
       name: channel.name,
       category: channel.category,
-      streamUrl: needsStreamProxy(channel.streamUrl, https) ? proxiedStreamUrl(channel.streamUrl) : channel.streamUrl,
+      streamUrls: resolvePlaybackStreamUrls(channel.streamUrls, https),
       streamFormat: channel.streamFormat,
       logo: channel.logo,
     }));

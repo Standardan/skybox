@@ -274,7 +274,20 @@ export interface Channel {
   name: string;
   logo?: string;
   category: string;
-  streamUrl: string;
+  /**
+   * Every candidate URL this channel can be played from, most-likely-good
+   * first — never just one. An Xtream provider's mirrors don't all serve
+   * live streams equally reliably even when they answer the API fine (a
+   * real, observed failure mode: one mirror's `get_live_streams` call
+   * succeeds but that same mirror's actual stream URLs mostly don't play),
+   * so pinning every channel to whichever single mirror happened to answer
+   * the channel-list call meant one bad mirror broke every channel at
+   * once. Always non-empty; a player retries down this list on failure
+   * before giving up (same idea as PlaybackControls' multi-source retry
+   * for VOD). M3U providers have no mirror concept, so this is always a
+   * single-element array for them.
+   */
+  streamUrls: string[];
   streamFormat: "hls" | "ts" | "unknown";
   epgChannelId?: string;
 }

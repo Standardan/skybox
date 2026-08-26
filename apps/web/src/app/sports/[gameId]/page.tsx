@@ -5,7 +5,7 @@ import { GameStateChip } from "@/components/GameStateChip";
 import { getTodaysMatchedGames } from "@/lib/sports-server";
 import { getIptvSnapshot } from "@/lib/iptv-server";
 import { readConfig } from "@/lib/config-store";
-import { isRequestHttps, needsStreamProxy, proxiedStreamUrl } from "@/lib/stream-proxy";
+import { isRequestHttps, resolvePlaybackStreamUrls } from "@/lib/stream-proxy";
 import { GameWatchPanel, type ChannelMatchView } from "./GameWatchPanel";
 import styles from "./page.module.css";
 
@@ -47,7 +47,7 @@ export default async function GameDetailPage({ params }: { params: Promise<{ gam
         channelId: channel.id,
         channelName: channel.name,
         channelLogo: channel.logo,
-        streamUrl: needsStreamProxy(channel.streamUrl, https) ? proxiedStreamUrl(channel.streamUrl) : channel.streamUrl,
+        streamUrls: resolvePlaybackStreamUrls(channel.streamUrls, https),
         streamFormat: channel.streamFormat,
         confidence: match.confidence,
         reason: match.reason,

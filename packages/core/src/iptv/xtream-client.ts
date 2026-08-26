@@ -164,9 +164,17 @@ export class XtreamClient implements IptvClient {
 
   async getChannels(): Promise<Channel[]> {
     const hidden = new Set(this.credentials.hiddenCategories);
+    // The mirror that answers get_live_streams reliably isn't necessarily
+    // reliable for actually serving the streams themselves (a real,
+    // observed provider failure mode) — so every channel carries a
+    // streamUrls candidate list across ALL configured mirrors, not just
+    // this one, with the one that just answered listed first since it's
+    // the most-likely-good guess.
+    const { baseUrls, username, password } = this.credentials;
     return this.withFailover(async (baseUrl) => {
-      const url = buildActionUrl(baseUrl, this.credentials.username, this.credentials.password, "get_live_streams");
+      const url = buildActionUrl(baseUrl, username, password, "get_live_streams");
       const data = await fetchJson<XtreamStreamEntry[]>(url, this.fetchOptions());
+      const mirrorsForStreaming = [baseUrl, ...baseUrls.filter((u) => u !== baseUrl)];
       return data
         .filter((entry) => {
           const categoryId = entry.category_id ?? undefined;
@@ -178,7 +186,9 @@ export class XtreamClient implements IptvClient {
           name: entry.name,
           logo: entry.stream_icon || undefined,
           category: entry.category_id ? String(entry.category_id) : "",
-          streamUrl: buildXtreamStreamUrl(baseUrl, this.credentials.username, this.credentials.password, entry.stream_id, "hls"),
+          streamUrls: mirrorsForStreaming.map((mirror) =>
+            buildXtreamStreamUrl(mirror, username, password, entry.stream_id, "hls"),
+          ),
           streamFormat: "hls" as const,
           epgChannelId: entry.epg_channel_id || undefined,
         }));

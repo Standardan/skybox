@@ -20,6 +20,11 @@ export function proxiedStreamUrl(rawUrl: string): string {
   return `/api/iptv-proxy?url=${encodeURIComponent(rawUrl)}`;
 }
 
+/** Same per-URL proxy decision as `resolvePlaybackStreamUrl`, applied across every candidate mirror URL for a channel — call `isRequestHttps()` once yourself and reuse this for a whole channel list. */
+export function resolvePlaybackStreamUrls(rawUrls: string[], servedOverHttps: boolean): string[] {
+  return rawUrls.map((url) => (needsStreamProxy(url, servedOverHttps) ? proxiedStreamUrl(url) : url));
+}
+
 /** One-shot version for a single URL — call `isRequestHttps()` yourself and reuse `needsStreamProxy`/`proxiedStreamUrl` directly when resolving many URLs in one request (e.g. a whole channel list) to avoid re-checking headers per item. */
 export async function resolvePlaybackStreamUrl(rawUrl: string): Promise<string> {
   const https = await isRequestHttps();
