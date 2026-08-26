@@ -8,7 +8,7 @@
  * simply contributes nothing.
  */
 import "server-only";
-import { EspnAdapter, getTodaysGames, matchGameToChannels } from "@skybox/core/sports";
+import { EspnAdapter, fetchLeagueTeams, getTodaysGames, matchGameToChannels } from "@skybox/core/sports";
 import type { EpgProgramme, Game, SportsAdapter } from "@skybox/core/shared";
 import { readConfig } from "./config-store";
 import { getIptvSnapshot } from "./iptv-server";
@@ -18,19 +18,63 @@ const EPG_WINDOW_BEFORE_MS = 60 * 60 * 1000; // 1h
 const EPG_WINDOW_AFTER_MS = 6 * 60 * 60 * 1000; // 6h
 
 /**
- * Starter roster of ESPN-backed league adapters (D1). League ids match
- * what `config.sports.leagues` stores and what `SportsAdapter.league`
- * exposes — ESPN's own URL scheme is `{sport}/{league}` per
- * packages/core/src/sports/espn-adapter.ts.
+ * Starter roster of ESPN-backed leagues (D1) — the single source of truth
+ * for league id <-> ESPN's `{sport}/{league}` URL scheme, used both to
+ * build schedule adapters and to look up real team rosters (searchTeams
+ * below). League ids match what `config.sports.leagues` stores.
  */
+const LEAGUES: Array<{ id: string; label: string; espnSport: string; espnLeague: string }> = [
+  { id: "nfl", label: "NFL", espnSport: "football", espnLeague: "nfl" },
+  { id: "nba", label: "NBA", espnSport: "basketball", espnLeague: "nba" },
+  { id: "mlb", label: "MLB", espnSport: "baseball", espnLeague: "mlb" },
+  { id: "nhl", label: "NHL", espnSport: "hockey", espnLeague: "nhl" },
+  { id: "epl", label: "Premier League", espnSport: "soccer", espnLeague: "eng.1" },
+];
+
 export function getFollowedLeagueAdapters(): SportsAdapter[] {
-  return [
-    new EspnAdapter("nfl", "football", "nfl"),
-    new EspnAdapter("nba", "basketball", "nba"),
-    new EspnAdapter("mlb", "baseball", "mlb"),
-    new EspnAdapter("nhl", "hockey", "nhl"),
-    new EspnAdapter("epl", "soccer", "eng.1"),
-  ];
+  return LEAGUES.map((l) => new EspnAdapter(l.id, l.espnSport, l.espnLeague));
+}
+
+export interface TeamSearchResult {
+  name: string;
+  league: string;
+  leagueLabel: string;
+}
+
+/** ~144 teams total across 5 leagues — small enough to cache whole, not paginated. */
+const TEAM_LIST_TTL_MS = 24 * 60 * 60 * 1000; // team rosters barely ever change
+let teamListCache: { teams: TeamSearchResult[]; fetchedAt: number } | null = null;
+
+async function getAllTeams(): Promise<TeamSearchResult[]> {
+  if (teamListCache && Date.now() - teamListCache.fetchedAt < TEAM_LIST_TTL_MS) {
+    return teamListCache.teams;
+  }
+
+  const perLeague = await Promise.allSettled(
+    LEAGUES.map(async (league) => {
+      const teams = await fetchLeagueTeams(league.espnSport, league.espnLeague);
+      return teams.map((t): TeamSearchResult => ({ name: t.name, league: league.id, leagueLabel: league.label }));
+    }),
+  );
+
+  const teams = perLeague.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+  teamListCache = { teams, fetchedAt: Date.now() };
+  return teams;
+}
+
+/**
+ * Real teams only (D-024) — backs the searchable team picker so a followed
+ * team is always spelled exactly right and always tied to a real league,
+ * instead of free text that can typo or silently belong to a league the
+ * user never enabled (the actual cause of "no games today" despite a
+ * followed team: getTodaysGames only fetches leagues in config.sports.leagues,
+ * so an unlisted league contributes zero games regardless of followed teams).
+ */
+export async function searchTeams(query: string): Promise<TeamSearchResult[]> {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return [];
+  const teams = await getAllTeams();
+  return teams.filter((t) => t.name.toLowerCase().includes(needle)).slice(0, 20);
 }
 
 function normalize(value: string): string {

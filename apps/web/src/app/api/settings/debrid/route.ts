@@ -42,7 +42,12 @@ export async function POST(request: Request) {
     try {
       const info = await client.getAuthUrl();
       return NextResponse.json(info);
-    } catch {
+    } catch (err) {
+      // Swallowing this without logging made a real deployment issue
+      // undiagnosable from the outside — the browser only ever saw the
+      // generic message below. `docker logs`/your platform's log viewer
+      // will now show the actual cause (network/DNS/timeout/provider error).
+      console.error(`[debrid connect] getAuthUrl failed for ${provider}:`, err);
       return NextResponse.json(
         { error: "Could not start the connection. Try again in a moment." },
         { status: 502 },
@@ -70,6 +75,7 @@ export async function POST(request: Request) {
       const account = await client.getAccountStatus(auth);
       return NextResponse.json({ status: "connected", account });
     } catch (err) {
+      console.error(`[debrid connect] pollForToken failed for ${provider}:`, err);
       const message = err instanceof Error ? err.message : "Unknown error.";
       return NextResponse.json({
         status: "error",
@@ -92,6 +98,7 @@ export async function POST(request: Request) {
       const account = await client.getAccountStatus(auth);
       return NextResponse.json({ status: "connected", account });
     } catch (err) {
+      console.error(`[debrid connect] connectWithApiKey failed for ${provider}:`, err);
       const message = err instanceof Error ? err.message : "Unknown error.";
       return NextResponse.json({ status: "error", message: `Could not verify that key: ${message}` });
     }

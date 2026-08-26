@@ -4,6 +4,7 @@ import { useState } from "react";
 import type { SportsPrefs } from "@skybox/core/shared";
 import { SettingsRow, Switch } from "@/components/SettingsRow";
 import { setSportsEnabled, setSpoilerFree, toggleLeague, addTeam, removeTeam } from "./actions";
+import { TeamPicker } from "./TeamPicker";
 import styles from "../settings.module.css";
 
 const LEAGUES: Array<{ id: string; label: string }> = [
@@ -16,7 +17,6 @@ const LEAGUES: Array<{ id: string; label: string }> = [
 
 export function SportsForm({ initialSports }: { initialSports: SportsPrefs }) {
   const [sports, setSports] = useState(initialSports);
-  const [teamInput, setTeamInput] = useState("");
   const [busy, setBusy] = useState(false);
 
   return (
@@ -89,36 +89,16 @@ export function SportsForm({ initialSports }: { initialSports: SportsPrefs }) {
             ))}
           </div>
         )}
-        <form
-          className={styles.panelPadded}
-          style={{ marginTop: "var(--space-3)" }}
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (!teamInput.trim()) return;
-            setBusy(true);
-            setSports(await addTeam(teamInput));
-            setTeamInput("");
-            setBusy(false);
-          }}
-        >
-          <div className={styles.field}>
-            <label htmlFor="team-name" className={styles.fieldLabel}>
-              Team name
-            </label>
-            <input
-              id="team-name"
-              type="text"
-              className={styles.input}
-              value={teamInput}
-              onChange={(e) => setTeamInput(e.target.value)}
-              placeholder="e.g. Philadelphia Eagles"
-              disabled={!sports.enabled}
-            />
-          </div>
-          <button type="submit" className={styles.buttonPrimary} disabled={busy || !sports.enabled}>
-            Add team
-          </button>
-        </form>
+        <div className={styles.panelPadded} style={{ marginTop: "var(--space-3)" }}>
+          <TeamPicker
+            disabled={busy || !sports.enabled}
+            onPick={async (team) => {
+              setBusy(true);
+              setSports(await addTeam(team.name, team.league));
+              setBusy(false);
+            }}
+          />
+        </div>
       </section>
     </>
   );
