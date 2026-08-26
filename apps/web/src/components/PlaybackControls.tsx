@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { isCached, detectResolution } from "@skybox/core/addon-client";
 import type { MediaType, PlaybackPrefs, StremioStream } from "@skybox/core/shared";
 import { Player, type PlayerSource } from "@/components/Player";
@@ -49,9 +49,11 @@ interface ResolveResponse {
   playableUrl?: string;
   filename?: string;
   message?: string;
+  /** false when this failure is connection-level (never reached the debrid provider at all) rather than specific to this source — every other source hits the same host and would fail identically, so the caller stops instead of grinding through the rest of the list. */
+  retryable?: boolean;
 }
 
-async function resolveStream(stream: StremioStream): Promise<ResolveResponse> {
+async function resolveStream(stream: StremioStream, signal: AbortSignal): Promise<ResolveResponse> {
   const res = await fetch("/api/resolve-stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -60,6 +62,7 @@ async function resolveStream(stream: StremioStream): Promise<ResolveResponse> {
       fileIdx: stream.fileIdx,
       url: stream.url,
     }),
+    signal,
   });
   return (await res.json()) as ResolveResponse;
 }
@@ -105,6 +108,13 @@ export function PlaybackControls({
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [playerSource, setPlayerSource] = useState<PlayerSource | null>(null);
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  // Owns the currently-running auto-retry loop (if any) so it can actually
+  // be cancelled — a stuck/slow network request (a real report: ECONNRESET
+  // hanging for a while before failing) used to keep the loop running with
+  // no way to stop it short of navigating away entirely, since closing the
+  // sources panel only hid it visually and the loop would just force it
+  // back open on its next failure regardless.
+  const abortRef = useRef<AbortController | null>(null);
 
   const streams = useMemo(() => applyPlaybackPrefs(rawStreams, playbackPrefs), [rawStreams, playbackPrefs]);
 
@@ -117,18 +127,32 @@ export function PlaybackControls({
    * so this now keeps trying forward automatically, the same way a
    * *playback* failure already does via handleSourceFailed below, and only
    * surfaces an error once every remaining source has also failed.
+   *
+   * Stops immediately instead of exhausting the whole list when the server
+   * marks a failure `retryable: false` (a connection-level failure that
+   * never reached the debrid provider at all, e.g. a reset connection) —
+   * every other source resolves through that exact same provider host and
+   * would fail identically, so grinding through the rest is both pointless
+   * and, worse, the actual cause of a real report: it read as "stuck
+   * trying to resolve every source" with no way to tell it wasn't.
    */
   const playIndex = useCallback(
     async (startIndex: number) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       let lastMessage = "Failed to resolve this source.";
       for (let index = startIndex; index < streams.length; index++) {
+        if (controller.signal.aborted) return;
         const stream = streams[index];
         if (!stream) continue;
         if (index > startIndex) setSourcesOpen(true);
         setResolvingIndex(index);
         setResolveError(null);
         try {
-          const result = await resolveStream(stream);
+          const result = await resolveStream(stream, controller.signal);
+          if (controller.signal.aborted) return;
           if (result.ok && result.playableUrl) {
             setPlayerSource({ url: result.playableUrl, format: "native" });
             setPlayingIndex(index);
@@ -136,18 +160,27 @@ export function PlaybackControls({
             return;
           }
           lastMessage = result.message ?? lastMessage;
+          if (result.retryable === false) break;
         } catch {
+          if (controller.signal.aborted) return;
           lastMessage = "Failed to resolve this source. Check your connection and try again.";
         }
       }
+      if (controller.signal.aborted) return;
       setResolvingIndex(null);
-      setResolveError(
-        streams.length - startIndex > 1 ? `${lastMessage} No other sources worked either.` : lastMessage,
-      );
+      setResolveError(lastMessage);
       setSourcesOpen(true);
     },
     [streams],
   );
+
+  /** Cancels any in-flight resolve/retry loop immediately (aborts the network request too, not just future attempts) and closes the panel. */
+  const stopResolving = useCallback(() => {
+    abortRef.current?.abort();
+    setResolvingIndex(null);
+    setResolveError(null);
+    setSourcesOpen(false);
+  }, []);
 
   const handleSourceFailed = useCallback(() => {
     setPlayerSource(null);
@@ -188,10 +221,10 @@ export function PlaybackControls({
         <button
           type="button"
           className={styles.secondary}
-          onClick={() => setSourcesOpen((open) => !open)}
+          onClick={() => (resolvingIndex !== null ? stopResolving() : setSourcesOpen((open) => !open))}
           aria-expanded={sourcesOpen}
         >
-          {sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
+          {resolvingIndex !== null ? "Stop" : sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
         </button>
       </div>
 
@@ -202,26 +235,42 @@ export function PlaybackControls({
         // overflow-hidden, bottom-anchored content box — otherwise a list
         // longer than the hero's fixed height gets silently clipped with
         // no way to scroll to the missing rows. Same trick playerOverlay
-        // below already relies on.
-        <div className={styles.sourcesOverlay} onClick={() => setSourcesOpen(false)}>
-          <ul className={styles.sourcesPanel} onClick={(e) => e.stopPropagation()}>
-            {streams.map((stream, index) => (
-              <li
-                key={stream.url ?? `${stream.infoHash ?? "stream"}:${stream.fileIdx ?? index}`}
-                className={index === playingIndex ? `${styles.sourceRow} ${styles.active}` : styles.sourceRow}
-              >
-                <span className={styles.sourceText}>{streamLabel(stream)}</span>
-                <button
-                  type="button"
-                  className={styles.sourcePlay}
-                  onClick={() => void playIndex(index)}
-                  disabled={resolvingIndex !== null}
+        // below already relies on. stopResolving (not just closing the
+        // panel) on backdrop click and the header's close button: clicking
+        // away used to only hide the list while an auto-retry loop kept
+        // running underneath and would force the panel back open on its
+        // next failure regardless — this actually cancels it.
+        <div className={styles.sourcesOverlay} onClick={stopResolving}>
+          <div className={styles.sourcesPanel} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.sourcesPanelHeader}>
+              {resolvingIndex !== null ? (
+                <span className={styles.sourceText}>Trying sources…</span>
+              ) : (
+                <span />
+              )}
+              <button type="button" className={styles.sourcesClose} onClick={stopResolving} aria-label="Close">
+                ×
+              </button>
+            </div>
+            <ul className={styles.sourcesList}>
+              {streams.map((stream, index) => (
+                <li
+                  key={stream.url ?? `${stream.infoHash ?? "stream"}:${stream.fileIdx ?? index}`}
+                  className={index === playingIndex ? `${styles.sourceRow} ${styles.active}` : styles.sourceRow}
                 >
-                  {resolvingIndex === index ? "Resolving…" : "Play"}
-                </button>
-              </li>
-            ))}
-          </ul>
+                  <span className={styles.sourceText}>{streamLabel(stream)}</span>
+                  <button
+                    type="button"
+                    className={styles.sourcePlay}
+                    onClick={() => void playIndex(index)}
+                    disabled={resolvingIndex !== null}
+                  >
+                    {resolvingIndex === index ? "Resolving…" : "Play"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
       )}
 

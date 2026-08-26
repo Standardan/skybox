@@ -28,7 +28,14 @@ interface XtreamAuthResponse {
 }
 
 interface XtreamCategoryEntry {
-  category_id: string;
+  // Real providers are inconsistent about whether this is a JSON string or
+  // number — sometimes even differently between get_live_categories and
+  // get_live_streams on the *same* provider. Every read of this field gets
+  // coerced with String() below rather than trusted at the declared type,
+  // since a stray number vs. "number" mismatch here silently broke
+  // "hide this category" (a Set of coerced strings never matched an
+  // uncoerced number, so nothing was ever recognized as hidden).
+  category_id: string | number;
   category_name: string;
 }
 
@@ -36,7 +43,7 @@ interface XtreamStreamEntry {
   stream_id: number | string;
   name: string;
   stream_icon?: string | null;
-  category_id?: string | null;
+  category_id?: string | number | null;
   epg_channel_id?: string | null;
 }
 
@@ -157,8 +164,8 @@ export class XtreamClient implements IptvClient {
       const url = buildActionUrl(baseUrl, this.credentials.username, this.credentials.password, "get_live_categories");
       const data = await fetchJson<XtreamCategoryEntry[]>(url, this.fetchOptions());
       return data
-        .filter((entry) => !hidden.has(entry.category_id))
-        .map((entry) => ({ id: entry.category_id, name: entry.category_name }));
+        .filter((entry) => !hidden.has(String(entry.category_id)))
+        .map((entry) => ({ id: String(entry.category_id), name: entry.category_name }));
     });
   }
 
@@ -178,7 +185,7 @@ export class XtreamClient implements IptvClient {
       return data
         .filter((entry) => {
           const categoryId = entry.category_id ?? undefined;
-          return categoryId === undefined || !hidden.has(categoryId);
+          return categoryId === undefined || !hidden.has(String(categoryId));
         })
         .map((entry) => ({
           providerId: this.providerId,

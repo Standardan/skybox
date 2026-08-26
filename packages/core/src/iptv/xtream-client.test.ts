@@ -101,6 +101,26 @@ describe("XtreamClient (single mirror)", () => {
       const calledUrl = fetchMock.mock.calls[0]![0] as string;
       expect(calledUrl).toContain("action=get_live_categories");
     });
+
+    it("hides a category whose id comes back as a JSON number, not just a string", async () => {
+      // Real providers are inconsistent about this — sometimes even between
+      // their own endpoints — so hiddenCategories (always plain strings,
+      // from what getCategories previously returned) must still match a
+      // raw number here. This was the actual bug behind "disabling a
+      // category doesn't hide its channels": an uncoerced number never
+      // matched the stored string in a Set.has() check.
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { category_id: 1, category_name: "News" },
+          { category_id: 3, category_name: "Adult" },
+        ]),
+      );
+      const client = new XtreamClient({ ...credentials, hiddenCategories: ["3"] });
+
+      const categories = await client.getCategories();
+
+      expect(categories).toEqual([{ id: "1", name: "News" }]);
+    });
   });
 
   describe("getChannels", () => {
@@ -141,6 +161,20 @@ describe("XtreamClient (single mirror)", () => {
 
       const calledUrl = fetchMock.mock.calls[0]![0] as string;
       expect(calledUrl).toContain("action=get_live_streams");
+    });
+
+    it("filters out a hidden category even when this endpoint's category_id is a JSON number", async () => {
+      fetchMock.mockResolvedValueOnce(
+        jsonResponse([
+          { stream_id: 101, name: "News HD", category_id: 1 },
+          { stream_id: 102, name: "Adult Channel", category_id: 3 },
+        ]),
+      );
+      const client = new XtreamClient({ ...credentials, hiddenCategories: ["3"] });
+
+      const channels = await client.getChannels();
+
+      expect(channels.map((c) => c.name)).toEqual(["News HD"]);
     });
   });
 });

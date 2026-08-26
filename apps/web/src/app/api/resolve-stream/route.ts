@@ -7,17 +7,34 @@ import {
 } from "@/lib/debrid-server";
 
 /**
+ * Whether trying a *different* source is worth it, or whether this failure
+ * will just repeat identically for every source since they all resolve
+ * through the same debrid provider host. An HttpError means the provider
+ * actually answered (with a real, if unhappy, response) — that can
+ * genuinely be specific to this one release (451, "not cached", a dead
+ * hash), so other sources are still worth trying. Anything else here is a
+ * connection-level failure (DNS, refused/reset connection, timeout) that
+ * never reached the provider at all — every other source hits the exact
+ * same host and will fail the exact same way, so grinding through the rest
+ * of a 20+ item source list is both pointless and, worse, exactly what
+ * makes the UI feel "stuck" trying to resolve.
+ */
+function isRetryableWithADifferentSource(error: unknown): boolean {
+  return error instanceof HttpError;
+}
+
+/**
  * Debrid providers return 451 when a specific release has been pulled for a
  * legal/DMCA reason — real, seen in production (Real-Debrid). It's not a
- * Skybox bug and not transient, so it gets a message that actually explains
- * what happened instead of the raw "Request failed: 451 ...", and the
- * caller (PlaybackControls) auto-advances to the next source rather than
- * just dead-ending here — most titles have other sources that aren't
- * affected by a takedown against this one specific release.
+ * Skybox bug, so it gets a message that actually explains what happened
+ * instead of the raw "Request failed: 451 ...".
  */
 function describeResolveError(error: unknown): string {
   if (error instanceof HttpError && error.status === 451) {
     return "This specific release was pulled by your debrid provider for legal reasons (a copyright takedown) — trying another source.";
+  }
+  if (!(error instanceof HttpError)) {
+    return "Could not reach your debrid provider (connection reset or timed out). This is a network problem between your server and the provider, not this specific source — check your server's outbound network/DNS, or try again in a moment.";
   }
   return error instanceof Error ? error.message : "Failed to resolve this source.";
 }
@@ -37,6 +54,8 @@ interface ResolveSuccess {
 interface ResolveFailure {
   ok: false;
   message: string;
+  /** false when every other source would fail the exact same way — see isRetryableWithADifferentSource. */
+  retryable: boolean;
 }
 
 /**
@@ -50,20 +69,21 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
   try {
     body = (await request.json()) as ResolveRequestBody;
   } catch {
-    return NextResponse.json({ ok: false, message: "Invalid request body." }, { status: 400 });
+    return NextResponse.json({ ok: false, message: "Invalid request body.", retryable: false }, { status: 400 });
   }
 
   const { infoHash, fileIdx, url } = body;
   if (!infoHash && !url) {
     return NextResponse.json(
-      { ok: false, message: "This source has no infoHash or url to resolve." },
+      { ok: false, message: "This source has no infoHash or url to resolve.", retryable: false },
       { status: 400 },
     );
   }
 
   if (!(await isDebridConnected())) {
+    // Not source-specific — every other source hits this exact same check.
     return NextResponse.json(
-      { ok: false, message: "Connect a debrid provider in Settings to play this source." },
+      { ok: false, message: "Connect a debrid provider in Settings to play this source.", retryable: false },
       { status: 409 },
     );
   }
@@ -73,7 +93,7 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       const result = await resolveDebridSource(infoHash, fileIdx);
       if (!result) {
         return NextResponse.json(
-          { ok: false, message: "Your debrid provider could not resolve this source." },
+          { ok: false, message: "Your debrid provider could not resolve this source.", retryable: true },
           { status: 502 },
         );
       }
@@ -105,6 +125,10 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       filename: url!.split("/").pop() || "stream",
     });
   } catch (error) {
-    return NextResponse.json({ ok: false, message: describeResolveError(error) }, { status: 502 });
+    console.error("[resolve-stream] failed:", error);
+    return NextResponse.json(
+      { ok: false, message: describeResolveError(error), retryable: isRetryableWithADifferentSource(error) },
+      { status: 502 },
+    );
   }
 }

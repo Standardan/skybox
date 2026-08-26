@@ -71,13 +71,48 @@
   width: 100%;
   max-width: 680px;
   max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.sourcesPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  margin-bottom: var(--space-2);
+}
+
+.sourcesClose {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--text-primary);
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-lg);
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.sourcesClose:hover {
+  background: rgb(255 255 255 / 0.16);
+}
+
+.sourcesList {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  padding: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .sourceRow {
