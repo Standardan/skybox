@@ -1,0 +1,23 @@
+{
+  "name": "@skybox/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:cinemeta": "tsx src/cinemeta-check.ts",
+    "auth:rd": "tsx src/auth-rd.ts",
+    "check:iptv": "tsx src/check-iptv.ts",
+    "resolve:stream": "tsx src/resolve-stream.ts",
+    "resolve:rd": "tsx src/rd-resolve-check.ts",
+    "smoke": "tsx src/smoke.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@skybox/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "@types/node": "^22.10.0"
+  }
+}

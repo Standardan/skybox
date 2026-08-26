@@ -1,0 +1,25 @@
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  min-height: 60vh;
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.emptyTitle {
+  font-size: var(--text-xl);
+}
+
+.emptyBody {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  max-width: 32rem;
+}
+
+.emptyLink {
+  color: var(--accent);
+  text-decoration: underline;
+}

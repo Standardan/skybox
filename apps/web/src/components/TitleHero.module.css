@@ -1,0 +1,64 @@
+.hero {
+  position: relative;
+  width: 100%;
+  min-height: 480px;
+  aspect-ratio: 21 / 9;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.backdrop {
+  object-fit: cover;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+      to top,
+      var(--void) 0%,
+      rgb(15 18 16 / 0.8) 30%,
+      rgb(15 18 16 / 0.25) 60%,
+      transparent 80%
+    ),
+    linear-gradient(to right, rgb(15 18 16 / 0.55) 0%, transparent 55%);
+}
+
+.content {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  max-width: 680px;
+  padding: 0 var(--space-6) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.title {
+  font-size: var(--text-hero);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.meta {
+  font-family: var(--font-third);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  letter-spacing: var(--tracking-third);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.synopsis {
+  font-family: var(--font-body);
+  font-size: var(--text-lg);
+  line-height: 1.5;
+  color: var(--text-primary);
+  max-width: 60ch;
+  margin: 0;
+}
+
+.actions {
+  margin-top: var(--space-2);
+}

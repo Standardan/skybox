@@ -1,0 +1,10 @@
+# Edit this one line, then run: docker compose --profile https up -d
+#
+# Replace "your-domain.com" with your actual domain (the one you pointed at
+# this server's IP address — see "Get a domain name" in README.md). Caddy
+# will automatically get it a free, auto-renewing HTTPS certificate the
+# first time it starts — nothing else to configure.
+
+your-domain.com {
+	reverse_proxy skybox:3000
+}

@@ -1,0 +1,25 @@
+node_modules/
+dist/
+.next/
+.turbo/
+*.tsbuildinfo
+.DS_Store
+.env
+.env.local
+coverage/
+
+# Real credentials/tokens for the manual test harness (apps/cli) — never commit these.
+.local/
+
+# Real accounts/credentials/watch history for a Docker deployment (docker-compose.yml
+# mounts this as the data volume) — never commit this either.
+data/
+
+# Local dev-tooling state, not part of the app.
+.claude/
+.webdesign-start/
+
+# Internal planning/decision-log docs — kept locally for reference, not part
+# of the public repo (kept out on request: repo should be just the app + README).
+docs/
+DESIGN-BRIEF.md

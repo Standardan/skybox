@@ -1,0 +1,105 @@
+.hero {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 21 / 9;
+  min-height: 420px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.backdrop {
+  object-fit: cover;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+      to top,
+      var(--void) 0%,
+      rgb(15 18 16 / 0.75) 30%,
+      rgb(15 18 16 / 0.15) 60%,
+      transparent 80%
+    ),
+    linear-gradient(to right, rgb(15 18 16 / 0.55) 0%, transparent 55%);
+}
+
+.content {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  max-width: 640px;
+  padding: 0 var(--space-6) var(--space-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.demoLabel {
+  align-self: flex-start;
+  font-family: var(--font-third);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: rgb(0 0 0 / 0.4);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.title {
+  font-size: var(--text-hero);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.synopsis {
+  font-family: var(--font-body);
+  font-size: var(--text-lg);
+  line-height: 1.5;
+  color: var(--text-primary);
+  max-width: 55ch;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.primary {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-hover) linear;
+  display: inline-block;
+  text-decoration: none;
+}
+
+.primary:hover {
+  background: var(--accent-hover);
+}
+
+.secondary {
+  appearance: none;
+  border: 1px solid rgb(255 255 255 / 0.3);
+  cursor: pointer;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-base);
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  text-decoration: none;
+}

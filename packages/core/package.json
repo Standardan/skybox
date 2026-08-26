@@ -1,0 +1,30 @@
+{
+  "name": "@skybox/core",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./addon-client": "./src/addon-client/index.ts",
+    "./debrid": "./src/debrid/index.ts",
+    "./iptv": "./src/iptv/index.ts",
+    "./epg": "./src/epg/index.ts",
+    "./sports": "./src/sports/index.ts",
+    "./library": "./src/library/index.ts",
+    "./sync": "./src/sync/index.ts",
+    "./shared": "./src/shared/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0",
+    "@types/node": "^22.10.0"
+  }
+}

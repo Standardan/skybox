@@ -1,0 +1,47 @@
+.rail {
+  padding-block: var(--space-4);
+}
+
+.heading {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-lg);
+  color: var(--text-primary);
+  margin: 0 0 var(--space-4) var(--space-6);
+}
+
+.track {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-6) var(--space-4);
+  margin: 0;
+  list-style: none;
+  scroll-padding-inline: var(--space-6);
+}
+
+.item {
+  flex: 0 0 auto;
+  /* Fail-visible: base state is fully opaque; the animation only plays a
+     transitional entrance on top of it, so disabled/unsupported animation
+     never hides content (anti-slop.md invisible-content trap). */
+  animation: reveal var(--duration-entrance) var(--ease-signature) both;
+  animation-delay: calc(var(--i, 0) * var(--stagger-step));
+}
+
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .item {
+    animation: none;
+  }
+}

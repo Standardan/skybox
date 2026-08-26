@@ -1,0 +1,280 @@
+/*
+  TV-guide surface. Reference: DESIGN-BRIEF.md LT-01 (Plex) — pill category
+  tabs, sticky timeline header, channel rows, live-progress block. Row
+  height/timeline-header height here must stay in sync with the
+  ROW_HEIGHT/TIMELINE_HEADER_HEIGHT constants in GuideGrid.tsx (they drive
+  the virtualization math).
+*/
+
+.guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6) var(--space-8);
+  height: calc(100vh - 88px);
+  min-height: 0;
+}
+
+.filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.pills {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-1);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pill {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background var(--duration-hover) var(--ease-signature), color var(--duration-hover) var(--ease-signature);
+}
+
+.pill:hover {
+  color: var(--text-primary);
+}
+
+.pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.pillActive {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.pillActive:hover {
+  color: var(--accent-fg);
+}
+
+.searchLabel {
+  flex: 0 0 auto;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.searchInput {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+  min-height: 44px;
+  padding: 0 var(--space-3);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  width: 220px;
+  max-width: 60vw;
+}
+
+.searchInput::placeholder {
+  color: var(--text-muted);
+}
+
+.searchInput:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.failureBanner {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--danger) 18%, var(--surface));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}
+
+.rowsViewport {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.timelineHeader {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  gap: var(--space-6);
+  align-items: center;
+  height: 44px;
+  padding: 0 var(--space-4);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.timelineTick {
+  font-family: var(--font-third);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: var(--tracking-caps);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.emptyList {
+  padding: var(--space-6);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.rowsInner {
+  position: relative;
+}
+
+.row {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.rowSelected {
+  background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+.channelIdentity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 0 0 200px;
+  min-width: 0;
+}
+
+.channelLogo {
+  width: 44px;
+  height: 44px;
+  object-fit: contain;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  flex: none;
+}
+
+.channelLogoFallback {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  flex: none;
+}
+
+.channelName {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.programBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.programTitle {
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.programMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.progressTrack {
+  width: 120px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  overflow: hidden;
+  flex: none;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.remaining {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.nextTitle {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.programUnknown {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.playerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}

@@ -1,0 +1,80 @@
+.card {
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: 160px;
+  border-radius: var(--radius-sm);
+}
+
+.art {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  width: 100%;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.image {
+  object-fit: cover;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgb(0 0 0 / 0.85) 0%, transparent 45%);
+  opacity: 0;
+  transition: opacity var(--duration-hover) linear;
+}
+
+.card:hover .scrim,
+.card:focus-visible .scrim {
+  opacity: 1;
+}
+
+.title {
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: var(--space-2);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  text-align: left;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity var(--duration-hover) linear,
+    transform var(--duration-hover) var(--ease-signature);
+}
+
+.card:hover .title,
+.card:focus-visible .title {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.progressTrack {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
+  background: rgb(255 255 255 / 0.2);
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .title {
+    transition: none;
+  }
+}

@@ -1,0 +1,19 @@
+# Real credentials — must never end up baked into an image layer.
+.local/
+.env
+.env.local
+
+node_modules
+**/node_modules
+.next
+**/.next
+.turbo
+
+# .git is intentionally NOT excluded — the builder stage reads the current
+# commit SHA from it (see Dockerfile's VERSION.txt step, apps/web/src/lib/
+# update-check.ts) to power the in-app update checker. Multi-stage builds
+# mean this never actually lands in the final runtime image regardless —
+# only what's explicitly COPY'd into the `runner` stage does.
+
+# apps/cli's own real-credential test files (see apps/cli/README.md)
+apps/cli/.local/

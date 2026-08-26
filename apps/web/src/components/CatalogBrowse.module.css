@@ -1,0 +1,13 @@
+.heading {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: var(--text-3xl);
+  color: var(--text-primary);
+  margin: var(--space-8) var(--space-6) 0;
+}
+
+.empty {
+  font-family: var(--font-body);
+  color: var(--text-muted);
+  margin: var(--space-8) var(--space-6);
+}

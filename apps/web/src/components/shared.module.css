@@ -1,0 +1,39 @@
+/*
+  Focus-lift — the app's one named signature element (DESIGN-BRIEF.md §3, §7).
+  Lineage: Uiverse Cards/gharsh11032000_rare-bobcat-17 (scale+shadow-on-hover),
+  composed with MDC mdc-focus-ring's focus-visible modality detection —
+  identical behavior for keyboard, remote, and mouse. See §8 Component
+  Opportunity Map.
+*/
+
+.focusLift {
+  transition:
+    transform var(--duration-focus) var(--ease-signature),
+    box-shadow var(--duration-focus) var(--ease-signature);
+  transform-origin: center;
+}
+
+.focusLift:hover,
+.focusLift:focus-visible {
+  transform: scale(1.05);
+  box-shadow: 0 0 24px var(--focus-ring-color);
+  z-index: 1;
+}
+
+.focusLift:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focusLift {
+    transition: box-shadow var(--duration-hover) linear;
+  }
+  .focusLift:hover,
+  .focusLift:focus-visible {
+    transform: none;
+    box-shadow: none;
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+}

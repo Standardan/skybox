@@ -1,0 +1,53 @@
+services:
+  skybox:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Everything real (accounts, debrid/IPTV credentials, watch history)
+      # lives here — back this up if you back up anything.
+      - ./data:/data
+    environment:
+      - SKYBOX_DATA_DIR=/data
+    restart: unless-stopped
+
+  # Optional — only starts with `docker compose --profile https up -d`.
+  # Gives you a real https://your-domain.com address with an automatic,
+  # auto-renewing certificate (Caddy handles Let's Encrypt for you — no
+  # certificate files to manage). See "Get a domain name" in README.md.
+  # If you skip this, Skybox is still fully reachable at http://<server-ip>:3000.
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    depends_on:
+      - skybox
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+  # Optional — only starts with `docker compose --profile updates up -d`.
+  # Lets an admin click "Apply update" in Settings instead of SSHing in to
+  # run the update commands by hand. This is the ONLY service in the whole
+  # deployment with Docker access — deliberately isolated here rather than
+  # given to `skybox` itself, since `skybox` is the internet-facing part.
+  # Not published to any host port — only `skybox` can reach it, over
+  # Compose's internal network, and only when an authenticated admin clicks
+  # the button (see updater/server.js for the full reasoning). Skipping
+  # this profile is completely fine — updating manually (README's
+  # "Updating Skybox") always works regardless.
+  updater:
+    build: ./updater
+    profiles: ["updates"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/workspace
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
