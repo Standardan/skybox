@@ -1,8 +1,16 @@
 /**
- * In-app update checker (admin-only). Compares the commit this instance was
- * built from against the latest commit on GitHub. Detection only — actually
- * applying an update is a separate, explicit admin action (see
- * apps/web/src/app/api/settings/update/apply/route.ts), never automatic.
+ * In-app update checker (admin-only). Compares the version this instance
+ * was built from against the version in the repo's `main` branch on
+ * GitHub. Detection only — actually applying an update is a separate,
+ * explicit admin action (see apps/web/src/app/api/settings/update/apply/route.ts),
+ * never automatic.
+ *
+ * Deliberately NOT based on `git rev-parse HEAD` baked in at build time —
+ * that only works when the Docker build context has a real `.git` folder,
+ * which isn't true everywhere (some platforms build from a plain source
+ * snapshot for a "public repository" deploy, with no git metadata at all).
+ * A plain tracked `VERSION` file at the repo root, bumped on meaningful
+ * changes, works regardless of how the source was fetched.
  *
  * Which repo to check defaults to the project's own upstream so this works
  * out of the box for the primary use case, but is overridable
@@ -10,20 +18,16 @@
  * updates checked against their own fork instead.
  */
 import "server-only";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import fs from "node:fs/promises";
 import path from "node:path";
-
-const execFileAsync = promisify(execFile);
 
 const DEFAULT_REPO = "Standardan/skybox";
 const DEFAULT_VERSION_FILE = "/app/VERSION.txt";
 const CHECK_TTL_MS = 60 * 60 * 1000; // don't hit GitHub more than once an hour
 
 export interface UpdateStatus {
-  currentSha: string | null;
-  latestSha: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
   updateAvailable: boolean;
   repo: string;
   compareUrl: string | null;
@@ -36,40 +40,40 @@ function getRepo(): string {
 }
 
 /**
- * The commit this running instance was built from. Docker deployments bake
- * this into `VERSION.txt` at build time (no `.git` in the final image);
- * local `pnpm dev` has a real `.git` to ask directly instead.
+ * The version this running instance was built from. Docker deployments
+ * have this baked into `VERSION.txt` at build time (a straight copy of the
+ * repo's own `VERSION` file — see the Dockerfile); local `pnpm dev` has no
+ * such baked file, so it reads the repo's `VERSION` file directly instead.
  */
-async function getCurrentSha(): Promise<string | null> {
+async function getCurrentVersion(): Promise<string | null> {
   const versionFile = process.env.SKYBOX_VERSION_FILE ?? DEFAULT_VERSION_FILE;
   try {
     const contents = (await fs.readFile(versionFile, "utf8")).trim();
-    if (contents && contents !== "unknown") return contents;
+    if (contents) return contents;
   } catch {
-    // Not a Docker deployment (no baked VERSION.txt) — fall through to git.
+    // Not a Docker deployment (no baked VERSION.txt) — fall through.
   }
 
   try {
     const repoRoot = path.resolve(process.cwd(), "../..");
-    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
-    return stdout.trim();
+    const contents = (await fs.readFile(path.join(repoRoot, "VERSION"), "utf8")).trim();
+    return contents || null;
   } catch {
     return null;
   }
 }
 
-async function getLatestSha(repo: string): Promise<string> {
+async function getLatestVersion(repo: string): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 8_000);
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/commits/main`, {
-      headers: { Accept: "application/vnd.github+json" },
+    const res = await fetch(`https://raw.githubusercontent.com/${repo}/main/VERSION`, {
       signal: controller.signal,
     });
-    if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
-    const data = (await res.json()) as { sha?: string };
-    if (!data.sha) throw new Error("GitHub API response had no sha");
-    return data.sha;
+    if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
+    const text = (await res.text()).trim();
+    if (!text) throw new Error("VERSION file on GitHub was empty");
+    return text;
   } finally {
     clearTimeout(timer);
   }
@@ -84,22 +88,22 @@ export async function checkForUpdate(): Promise<UpdateStatus> {
   }
 
   const repo = getRepo();
-  const currentSha = await getCurrentSha();
+  const currentVersion = await getCurrentVersion();
 
-  let latestSha: string | null = null;
+  let latestVersion: string | null = null;
   let error: string | null = null;
   try {
-    latestSha = await getLatestSha(repo);
+    latestVersion = await getLatestVersion(repo);
   } catch (err) {
     error = err instanceof Error ? err.message : "Could not reach GitHub.";
   }
 
   const status: UpdateStatus = {
-    currentSha,
-    latestSha,
-    updateAvailable: Boolean(currentSha && latestSha && currentSha !== latestSha),
+    currentVersion,
+    latestVersion,
+    updateAvailable: Boolean(currentVersion && latestVersion && currentVersion !== latestVersion),
     repo,
-    compareUrl: currentSha && latestSha ? `https://github.com/${repo}/compare/${currentSha}...${latestSha}` : null,
+    compareUrl: `https://github.com/${repo}/commits/main`,
     checkedAt: Date.now(),
     error,
   };

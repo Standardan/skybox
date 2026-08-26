@@ -4,16 +4,12 @@ import { useEffect, useState } from "react";
 import styles from "../settings.module.css";
 
 interface UpdateStatusData {
-  currentSha: string | null;
-  latestSha: string | null;
+  currentVersion: string | null;
+  latestVersion: string | null;
   updateAvailable: boolean;
   repo: string;
   compareUrl: string | null;
   error: string | null;
-}
-
-function short(sha: string | null): string {
-  return sha ? sha.slice(0, 7) : "unknown";
 }
 
 export function UpdateStatus() {
@@ -71,20 +67,26 @@ export function UpdateStatus() {
     <section className={styles.panelPadded}>
       <p className={styles.fieldLabel}>Running version</p>
       <p className={styles.fieldHint}>
-        {short(status.currentSha)} — checked against{" "}
+        {status.currentVersion ?? "unknown"} — checked against{" "}
         <a href={`https://github.com/${status.repo}`} target="_blank" rel="noreferrer">
           {status.repo}
         </a>
       </p>
 
-      {status.error ? (
+      {status.currentVersion === null ? (
+        <p className={styles.errorText} style={{ marginTop: "var(--space-3)" }}>
+          Couldn&rsquo;t determine the version this instance is running, so it&rsquo;s not possible to say
+          whether you&rsquo;re up to date. This can happen right after switching deploy methods — redeploying
+          again usually fixes it.
+        </p>
+      ) : status.error ? (
         <p className={styles.errorText} style={{ marginTop: "var(--space-3)" }}>
           Couldn&rsquo;t check GitHub: {status.error}
         </p>
       ) : status.updateAvailable ? (
         <div style={{ marginTop: "var(--space-4)" }}>
           <p className={styles.successText} role="status">
-            An update is available ({short(status.latestSha)}).
+            An update is available ({status.latestVersion}).
           </p>
           {status.compareUrl ? (
             <p className={styles.fieldHint}>
@@ -102,6 +104,10 @@ export function UpdateStatus() {
           >
             {applying ? "Applying…" : "Apply update"}
           </button>
+          <p className={styles.fieldHint} style={{ marginTop: "var(--space-2)" }}>
+            On Coolify (or any platform that manages the container for you), this button won&rsquo;t work —
+            use that platform&rsquo;s own Redeploy action instead.
+          </p>
           {applyMessage ? (
             <p className={styles.successText} style={{ marginTop: "var(--space-3)" }} role="status">
               {applyMessage}

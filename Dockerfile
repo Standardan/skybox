@@ -26,12 +26,6 @@ COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY . .
 ENV SKYBOX_DOCKER_BUILD=1
 RUN pnpm --filter @skybox/web build
-# Captures exactly which commit this image was built from, so the running
-# app can tell it apart from whatever's newest on GitHub (in-app update
-# check, apps/web/src/lib/update-check.ts). `.git` never reaches the final
-# image — multi-stage builds only carry over what `runner` below explicitly
-# COPYs, and this stage isn't one of its sources.
-RUN git rev-parse HEAD > /VERSION.txt || echo "unknown" > /VERSION.txt
 
 # ---- runner: just the standalone output, nothing else ----
 FROM node:22-slim AS runner
@@ -43,7 +37,11 @@ RUN groupadd --system --gid 1001 skybox && useradd --system --uid 1001 --gid sky
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
-COPY --from=builder /VERSION.txt ./VERSION.txt
+# Plain repo file, not derived from `git` — works no matter how the source
+# got here (full clone, shallow clone, or a tarball snapshot with no .git
+# at all, which is how some platforms fetch a "public repository" build).
+# Powers the in-app update check (apps/web/src/lib/update-check.ts).
+COPY VERSION ./VERSION.txt
 RUN mkdir -p /data && chown -R skybox:skybox /data
 USER skybox
 EXPOSE 3000
