@@ -19,6 +19,7 @@ One app for everything you watch: live TV & sports (via your own IPTV subscripti
   - [Step 5 — Start it up](#step-5--start-it-up)
   - [Step 6 — Get a domain name (recommended)](#step-6--get-a-domain-name-recommended)
   - [Step 7 — Turn on HTTPS](#step-7--turn-on-https)
+  - [Deploying with Coolify instead](#deploying-with-coolify-instead)
 - [First launch: create your admin account](#first-launch-create-your-admin-account)
 - [Connect your services](#connect-your-services)
 - [Add people in your household](#add-people-in-your-household)
@@ -81,10 +82,7 @@ Other devices on the same network can then reach it at `http://<your-computer's-
 
 This is the recommended path if more than one person or device will use Skybox. It uses **Docker**, which packages Skybox with everything it needs so you don't have to install Node.js, pnpm, or anything else on the server by hand.
 
-> **Using Coolify (or a similar self-hosted PaaS) instead of plain Docker Compose?** The steps below still get the code onto your server, but a few things work differently:
-> - Don't enable Skybox's own `--profile https` (Caddy) — Coolify runs its own reverse proxy (Traefik) that already handles domains and HTTPS. Running both fights over the same ports.
-> - Coolify usually doesn't publish container ports straight to the server's IP the way plain `docker compose up` does — so `http://your-server-ip:3000` typically won't work, and that's expected, not a bug. Instead, use the **Domains**/**FQDN** field in that service's Coolify settings; if you don't have your own domain yet, Coolify can often generate a free working one for you there (something like `yourapp.<your-server-ip>.sslip.io`).
-> - If something on the server already uses port 3000, set `SKYBOX_PORT` in Coolify's own environment-variables UI for the service (see "Something else on the server already uses port 3000" in Troubleshooting) — though once you're accessing Skybox via a Coolify domain, this setting isn't actually in the request path anymore, so it's rarely the fix you need.
+There are two ways to actually run it once you have a server: the manual Docker Compose steps below (Steps 2–7), or **[Coolify](#deploying-with-coolify-instead)**, a free self-hosted dashboard that does most of this for you with clicks instead of commands — including HTTPS — and is genuinely the easier path if you're not comfortable in a terminal. Either way, Step 1 (getting the server itself) is the same.
 
 ### Step 1 — Get a server
 
@@ -174,6 +172,31 @@ docker compose --profile https up -d --build
 
 Wait about 30 seconds (Caddy is fetching a free, real certificate for your domain automatically — nothing for you to do), then open `https://yourdomain.com` from any device. That's it — every device that opens that address gets the real, secure Skybox site, and the certificate renews itself forever.
 
+### Deploying with Coolify instead
+
+[Coolify](https://coolify.io) is a free, self-hosted dashboard that manages Docker deployments for you — no manual `docker compose` commands, and it handles HTTPS itself. This replaces Steps 2–7 above entirely; you still need a server from Step 1 first.
+
+1. **Install Coolify** on your server (skip this if you already have it running): SSH in (Step 2 above) and run
+   ```bash
+   curl -fsSL https://cdn.coollabs.io/coolify/install.sh | bash
+   ```
+   This also installs Docker for you. When it finishes, it prints an address like `http://your-server-ip:8000` — open that and create your Coolify admin account immediately (the first person to reach that page becomes the admin, so don't leave it open to the world for long).
+
+2. **Create a new Project** in Coolify, then add a new **Resource** inside it. Choose **Public Repository**, and paste your Skybox repository's URL (e.g. `https://github.com/Standardan/skybox.git` if you're using this repo directly, or your own fork's URL).
+
+3. When Coolify asks how to build it, choose **Dockerfile** — Skybox already has one at the root of the repo, so there's nothing to configure here.
+
+4. **Add persistent storage before your first deploy.** This step matters — skipping it means every redeploy wipes your accounts and watch history. In the resource's **Storage** (or **Persistent Storage**) panel, add a volume with the **Destination Path** set to `/data`. Coolify handles the host side of this itself; you don't need to type a source path.
+
+5. **Set up your domain.** In the resource's **Domains** (or **FQDN**) field, either paste your own domain (same DNS A-record step as Step 6 above — point it at your server's IP), or use the free auto-generated address Coolify offers if you don't have one yet. Coolify issues the HTTPS certificate for this automatically.
+
+6. Click **Deploy**. Once it finishes, open your domain — you should land on **Create admin account**, same as any other install.
+
+A few things that work differently here than the manual path:
+- **Don't enable Skybox's own `--profile https` (Caddy)** — Coolify's own reverse proxy (Traefik) is already doing that job. Running both fights over the same ports.
+- **Skybox's port isn't reachable directly** (`http://your-server-ip:3000` won't work) — Coolify routes everything through the domain you set in step 5 instead. That's expected, not a bug.
+- **To update, use Coolify's own Redeploy button** (or turn on its auto-deploy-on-push option) instead of Settings → Updates' "Apply update" — that button relies on a piece (the `updater` service) that a plain Dockerfile deployment doesn't include.
+
 ## First launch: create your admin account
 
 Whichever path you took, the very first time you open Skybox it shows **Create admin account** instead of anything else — this is expected, and it's the only account that can manage other accounts later. Pick a username and password (at least 8 characters) and submit. You're now signed in.
@@ -217,8 +240,9 @@ This adds one more small container whose only job is applying updates when you c
 
 ## Troubleshooting
 
-- **The page won't load at all.** Check your VPS provider's Firewall/Security Group settings and make sure the ports you're using are allowed in (3000 for IP-only access, or 80 and 443 if you set up a domain). If you installed something like Coolify, it may have also set up its own firewall (`ufw`) on the server that only allows a smaller set of ports by default — run `sudo ufw status` to check.
-- **Something else on the server already uses port 3000.** Create a file named `.env` next to `docker-compose.yml` (copy `.env.example` as a starting point) containing `SKYBOX_PORT=8088` (or any free port), then `docker compose up -d`. Skybox will be reachable at that port instead — nothing else changes.
+- **The page won't load at all (plain Docker Compose, not Coolify).** Check your VPS provider's Firewall/Security Group settings and make sure the ports you're using are allowed in (3000 for IP-only access, or 80 and 443 if you set up a domain). Also check the server's own firewall with `sudo ufw status` — if it says `inactive`, the server itself isn't blocking anything, so look at the provider's firewall instead.
+- **`http://your-server-ip:3000` doesn't load, and you're using Coolify.** This is expected, not a bug — Coolify doesn't publish container ports straight to the server's IP the way plain `docker compose up` does. You can confirm this by running `sudo ss -tlnp | grep LISTEN` on the server: if `3000` isn't in that list, nothing is listening there at all, no firewall change will fix it, and you need the **Domains**/**FQDN** field instead (see [Deploying with Coolify](#deploying-with-coolify-instead)).
+- **Something else on the server already uses port 3000 (plain Docker Compose).** Create a file named `.env` next to `docker-compose.yml` (copy `.env.example` as a starting point) containing `SKYBOX_PORT=8088` (or any free port), then `docker compose up -d`. Skybox will be reachable at that port instead — nothing else changes. (On Coolify, set this in the resource's own environment-variables UI instead of a `.env` file — though once you're accessing Skybox via a Coolify domain, this setting isn't actually in the request path anymore, so it's rarely what you need.)
 - **HTTPS/certificate errors right after Step 7.** Give DNS a bit longer to propagate (see Step 6), then re-run `docker compose --profile https up -d`. Caddy retries automatically.
 - **Forgot the admin password.** On the server, run `nano data/users.json`, find the account's entry, and delete its whole `{ ... }` block from the list (careful to keep the surrounding `[` and `]` and commas valid), save (Ctrl+O, Enter, Ctrl+X), then `docker compose restart skybox`. If that was the only account, Skybox will show the first-run setup screen again on next visit.
 - **A live channel won't play, or feels slow to load a channel list.** Some IPTV providers are simply unreliable moment to moment — try a different channel, or wait and retry. This isn't unique to Skybox.
