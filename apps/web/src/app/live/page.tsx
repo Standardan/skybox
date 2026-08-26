@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { EpgNowNext } from "@skybox/core/shared";
 import { getIptvSnapshot } from "@/lib/iptv-server";
 import { GuideGrid } from "@/components/GuideGrid";
 import { TopNav } from "@/components/TopNav";
 import { isRequestHttps, resolvePlaybackStreamUrls } from "@/lib/stream-proxy";
+import { getCurrentUser } from "@/lib/session";
+import { readLiveTvPrefs } from "@/lib/live-tv-prefs-store";
 import styles from "./page.module.css";
 
 // This route's IPTV/EPG fetches are already cached at the application layer
@@ -25,7 +28,13 @@ export const dynamic = "force-dynamic";
  * distinct `epgChannelId`, into a plain lookup map.
  */
 export default async function LiveTvPage() {
-  const { channels, categories, epgStore } = await getIptvSnapshot();
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+
+  const [{ channels, categories, epgStore }, prefs] = await Promise.all([
+    getIptvSnapshot(),
+    readLiveTvPrefs(user.id),
+  ]);
 
   if (channels.length === 0) {
     return (
@@ -67,7 +76,12 @@ export default async function LiveTvPage() {
     <>
       <TopNav />
       <main>
-        <GuideGrid channels={playableChannels} categories={categories} nowNextByEpgId={nowNextByEpgId} />
+        <GuideGrid
+          channels={playableChannels}
+          categories={categories}
+          nowNextByEpgId={nowNextByEpgId}
+          initialPrefs={prefs}
+        />
       </main>
     </>
   );

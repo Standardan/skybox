@@ -66,6 +66,19 @@
   color: var(--accent-fg);
 }
 
+.pillFavorites {
+  /* Always pinned first, never draggable — no grab cursor to imply otherwise. */
+  cursor: pointer;
+}
+
+.pill[draggable="true"] {
+  cursor: grab;
+}
+
+.dragging {
+  opacity: 0.4;
+}
+
 .searchLabel {
   flex: 0 0 auto;
 }
@@ -156,25 +169,66 @@
 }
 
 .row {
-  appearance: none;
-  border: none;
-  cursor: pointer;
   position: absolute;
   left: 0;
   right: 0;
   height: 76px;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-2);
   padding: 0 var(--space-4);
   background: transparent;
   color: var(--text-primary);
-  text-align: left;
   border-bottom: 1px solid var(--border);
+}
+
+.row[draggable="true"] {
+  cursor: grab;
 }
 
 .rowSelected {
   background: color-mix(in oklab, var(--accent) 12%, transparent);
+}
+
+.favoriteToggle {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.favoriteToggle:hover {
+  color: var(--accent);
+  background: rgb(255 255 255 / 0.08);
+}
+
+.favoriteToggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.rowMain {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: 0;
 }
 
 .channelIdentity {
