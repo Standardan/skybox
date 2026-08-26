@@ -7,31 +7,40 @@ import {
 } from "@/lib/debrid-server";
 
 /**
- * Whether trying a *different* source is worth it, or whether this failure
- * will just repeat identically for every source since they all resolve
- * through the same debrid provider host. An HttpError means the provider
- * actually answered (with a real, if unhappy, response) — that can
- * genuinely be specific to this one release (451, "not cached", a dead
- * hash), so other sources are still worth trying. Anything else here is a
- * connection-level failure (DNS, refused/reset connection, timeout) that
- * never reached the provider at all — every other source hits the exact
- * same host and will fail the exact same way, so grinding through the rest
- * of a 20+ item source list is both pointless and, worse, exactly what
- * makes the UI feel "stuck" trying to resolve.
+ * Status codes that genuinely mean "something's wrong with THIS release" —
+ * 451 (pulled for legal reasons) and 404 (this specific hash/id isn't
+ * known to the provider) — where a different source is actually worth
+ * trying. Everything else defaults to NOT retryable: an HttpError means
+ * the provider answered, but a status like 429 (rate limited) or 401/403
+ * (auth/account trouble) applies to the whole account, not this one
+ * source — trying the next source just fires another request at the same
+ * throttled/broken account and gets the same answer, only faster and
+ * worse. Real report this guards against: a burst of resolve attempts
+ * across many sources tripped Real-Debrid's rate limiting, and blindly
+ * treating 429 as "try the next source" meant the retry loop kept
+ * hammering the same limited account across the whole source list instead
+ * of backing off — actively making the rate limit worse, not working
+ * around it.
  */
+const CONTENT_SPECIFIC_STATUSES = new Set([404, 451]);
+
 function isRetryableWithADifferentSource(error: unknown): boolean {
-  return error instanceof HttpError;
+  return error instanceof HttpError && CONTENT_SPECIFIC_STATUSES.has(error.status);
 }
 
 /**
  * Debrid providers return 451 when a specific release has been pulled for a
- * legal/DMCA reason — real, seen in production (Real-Debrid). It's not a
- * Skybox bug, so it gets a message that actually explains what happened
- * instead of the raw "Request failed: 451 ...".
+ * legal/DMCA reason, and 429 when the account/IP is being rate limited —
+ * both real, seen in production (Real-Debrid). Neither is a Skybox bug, so
+ * both get a message that actually explains what happened instead of the
+ * raw "Request failed: 429 ..."/"Request failed: 451 ...".
  */
 function describeResolveError(error: unknown): string {
   if (error instanceof HttpError && error.status === 451) {
     return "This specific release was pulled by your debrid provider for legal reasons (a copyright takedown) — trying another source.";
+  }
+  if (error instanceof HttpError && error.status === 429) {
+    return "Your debrid provider is rate-limiting this account right now (too many requests too quickly) — wait a bit before trying again. Trying more sources won't help; they all hit the same limit.";
   }
   if (!(error instanceof HttpError)) {
     return "Could not reach your debrid provider (connection reset or timed out). This is a network problem between your server and the provider, not this specific source — check your server's outbound network/DNS, or try again in a moment.";
