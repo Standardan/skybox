@@ -69,6 +69,7 @@ export function Player({
   startPositionSec,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSeekedToStart = useRef(false);
   const [playing, setPlaying] = useState(false);
@@ -78,6 +79,7 @@ export function Player({
   const [chromeVisible, setChromeVisible] = useState(true);
   const [errored, setErrored] = useState(false);
   const [retried, setRetried] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Throttled progress reporting — fires on a timer while playing, plus
   // once more on pause/unmount so the last position before the user stops
@@ -194,6 +196,28 @@ export function Player({
     video.currentTime = fraction * video.duration;
   }, []);
 
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen();
+    } else {
+      // Fullscreens the whole chrome container, not just <video> — so the
+      // custom controls/scrub bar stay usable in fullscreen instead of
+      // falling back to the browser's native video-only fullscreen.
+      void playerRef.current?.requestFullscreen();
+    }
+  }, []);
+
+  // Browsers also exit fullscreen from outside our button (Escape, the
+  // browser's own UI) — mirror that into state rather than trusting only
+  // our own toggle to keep it in sync.
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    }
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
   // --- keyboard shortcuts (docs/05-UX.md §Player) -----------------------
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -222,7 +246,15 @@ export function Player({
             live.onChannelDown();
           }
           break;
+        case "f":
+        case "F":
+          toggleFullscreen();
+          break;
         case "Escape":
+          // The browser already exits fullscreen on its own for this key —
+          // don't also close the whole player on the same press. A second
+          // Escape (now not fullscreen) closes it as usual.
+          if (document.fullscreenElement) break;
           onClose?.();
           break;
         default:
@@ -231,12 +263,13 @@ export function Player({
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [togglePlay, seekBy, live, onClose, wakeChrome]);
+  }, [togglePlay, seekBy, live, onClose, wakeChrome, toggleFullscreen]);
 
   const progressFraction = duration > 0 ? currentTime / duration : 0;
 
   return (
     <div
+      ref={playerRef}
       className={`${styles.player} ${chromeVisible ? "" : styles.chromeHidden}`}
       onMouseMove={wakeChrome}
       onPointerDown={wakeChrome}
@@ -365,6 +398,15 @@ export function Player({
               aria-label="Volume"
             />
           </div>
+
+          <button
+            type="button"
+            className={styles.fullscreenButton}
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          >
+            {isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+          </button>
         </div>
       </div>
     </div>
@@ -383,6 +425,22 @@ function PauseIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
       <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+    </svg>
+  );
+}
+
+function FullscreenIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M4 9V5a1 1 0 0 1 1-1h4v2H6v3H4zM4 15v4a1 1 0 0 0 1 1h4v-2H6v-3H4zM20 9V5a1 1 0 0 0-1-1h-4v2h3v3h2zM20 15v4a1 1 0 0 1-1 1h-4v-2h3v-3h2z" />
+    </svg>
+  );
+}
+
+function ExitFullscreenIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M9 4H5a1 1 0 0 0-1 1v4h2V6h3V4zM9 20H5a1 1 0 0 1-1-1v-4h2v3h3v2zM15 4h4a1 1 0 0 1 1 1v4h-2V6h-3V4zM15 20h4a1 1 0 0 0 1-1v-4h-2v3h-3v2z" />
     </svg>
   );
 }

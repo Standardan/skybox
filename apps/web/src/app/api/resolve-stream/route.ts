@@ -1,9 +1,26 @@
 import { NextResponse } from "next/server";
+import { HttpError } from "@skybox/core/shared";
 import {
   isDebridConnected,
   resolveDebridSource,
   unrestrictDebridLink,
 } from "@/lib/debrid-server";
+
+/**
+ * Debrid providers return 451 when a specific release has been pulled for a
+ * legal/DMCA reason — real, seen in production (Real-Debrid). It's not a
+ * Skybox bug and not transient, so it gets a message that actually explains
+ * what happened instead of the raw "Request failed: 451 ...", and the
+ * caller (PlaybackControls) auto-advances to the next source rather than
+ * just dead-ending here — most titles have other sources that aren't
+ * affected by a takedown against this one specific release.
+ */
+function describeResolveError(error: unknown): string {
+  if (error instanceof HttpError && error.status === 451) {
+    return "This specific release was pulled by your debrid provider for legal reasons (a copyright takedown) — trying another source.";
+  }
+  return error instanceof Error ? error.message : "Failed to resolve this source.";
+}
 
 interface ResolveRequestBody {
   infoHash?: string;
@@ -88,9 +105,6 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       filename: url!.split("/").pop() || "stream",
     });
   } catch (error) {
-    return NextResponse.json(
-      { ok: false, message: error instanceof Error ? error.message : "Failed to resolve this source." },
-      { status: 502 },
-    );
+    return NextResponse.json({ ok: false, message: describeResolveError(error) }, { status: 502 });
   }
 }

@@ -108,26 +108,43 @@ export function PlaybackControls({
 
   const streams = useMemo(() => applyPlaybackPrefs(rawStreams, playbackPrefs), [rawStreams, playbackPrefs]);
 
+  /**
+   * A single source's *resolve* step (not playback) failing — e.g. a debrid
+   * provider refusing one specific release for a legal/DMCA reason, or a
+   * dead/expired link — used to just stop and show an error, leaving the
+   * user to dig through "All sources" themselves for a working one. Most
+   * titles have several sources unaffected by whatever took this one out,
+   * so this now keeps trying forward automatically, the same way a
+   * *playback* failure already does via handleSourceFailed below, and only
+   * surfaces an error once every remaining source has also failed.
+   */
   const playIndex = useCallback(
-    async (index: number) => {
-      const stream = streams[index];
-      if (!stream) return;
-      setResolvingIndex(index);
-      setResolveError(null);
-      try {
-        const result = await resolveStream(stream);
-        if (!result.ok || !result.playableUrl) {
-          setResolveError(result.message ?? "Failed to resolve this source.");
-          setResolvingIndex(null);
-          return;
+    async (startIndex: number) => {
+      let lastMessage = "Failed to resolve this source.";
+      for (let index = startIndex; index < streams.length; index++) {
+        const stream = streams[index];
+        if (!stream) continue;
+        if (index > startIndex) setSourcesOpen(true);
+        setResolvingIndex(index);
+        setResolveError(null);
+        try {
+          const result = await resolveStream(stream);
+          if (result.ok && result.playableUrl) {
+            setPlayerSource({ url: result.playableUrl, format: "native" });
+            setPlayingIndex(index);
+            setResolvingIndex(null);
+            return;
+          }
+          lastMessage = result.message ?? lastMessage;
+        } catch {
+          lastMessage = "Failed to resolve this source. Check your connection and try again.";
         }
-        setPlayerSource({ url: result.playableUrl, format: "native" });
-        setPlayingIndex(index);
-      } catch {
-        setResolveError("Failed to resolve this source. Check your connection and try again.");
-      } finally {
-        setResolvingIndex(null);
       }
+      setResolvingIndex(null);
+      setResolveError(
+        streams.length - startIndex > 1 ? `${lastMessage} No other sources worked either.` : lastMessage,
+      );
+      setSourcesOpen(true);
     },
     [streams],
   );
@@ -166,7 +183,7 @@ export function PlaybackControls({
           onClick={() => void playIndex(0)}
           disabled={resolvingIndex !== null}
         >
-          {resolvingIndex === 0 ? "Resolving…" : "Play"}
+          {resolvingIndex !== null ? "Resolving…" : "Play"}
         </button>
         <button
           type="button"
@@ -181,24 +198,31 @@ export function PlaybackControls({
       {resolveError && <p className={styles.errorMessage}>{resolveError}</p>}
 
       {sourcesOpen && (
-        <ul className={styles.sourcesPanel}>
-          {streams.map((stream, index) => (
-            <li
-              key={stream.url ?? `${stream.infoHash ?? "stream"}:${stream.fileIdx ?? index}`}
-              className={index === playingIndex ? `${styles.sourceRow} ${styles.active}` : styles.sourceRow}
-            >
-              <span className={styles.sourceText}>{streamLabel(stream)}</span>
-              <button
-                type="button"
-                className={styles.sourcePlay}
-                onClick={() => void playIndex(index)}
-                disabled={resolvingIndex !== null}
+        // Fixed positioning (not normal flow) so this escapes TitleHero's
+        // overflow-hidden, bottom-anchored content box — otherwise a list
+        // longer than the hero's fixed height gets silently clipped with
+        // no way to scroll to the missing rows. Same trick playerOverlay
+        // below already relies on.
+        <div className={styles.sourcesOverlay} onClick={() => setSourcesOpen(false)}>
+          <ul className={styles.sourcesPanel} onClick={(e) => e.stopPropagation()}>
+            {streams.map((stream, index) => (
+              <li
+                key={stream.url ?? `${stream.infoHash ?? "stream"}:${stream.fileIdx ?? index}`}
+                className={index === playingIndex ? `${styles.sourceRow} ${styles.active}` : styles.sourceRow}
               >
-                {resolvingIndex === index ? "Resolving…" : "Play"}
-              </button>
-            </li>
-          ))}
-        </ul>
+                <span className={styles.sourceText}>{streamLabel(stream)}</span>
+                <button
+                  type="button"
+                  className={styles.sourcePlay}
+                  onClick={() => void playIndex(index)}
+                  disabled={resolvingIndex !== null}
+                >
+                  {resolvingIndex === index ? "Resolving…" : "Play"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {playerSource && (
