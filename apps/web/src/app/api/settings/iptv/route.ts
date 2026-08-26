@@ -6,7 +6,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import { NextResponse } from "next/server";
-import { createIptvClient } from "@skybox/core/iptv";
+import { createIptvClient, XtreamClient } from "@skybox/core/iptv";
 import type { IptvProvider } from "@skybox/core/shared";
 import { updateConfig, readConfig } from "@/lib/config-store";
 import { invalidateIptvSnapshot } from "@/lib/iptv-server";
@@ -84,12 +84,21 @@ export async function POST(request: Request) {
   }
 
   try {
-    const ok = await createIptvClient(provider).validate();
+    const client = createIptvClient(provider);
+    const ok = await client.validate();
     if (!ok) {
       return NextResponse.json(
         { error: "Could not verify this provider. Check the details and try again." },
         { status: 400 },
       );
+    }
+    // Capture whichever mirror just answered right away, same moment a
+    // typical IPTV client would remember it — otherwise the very next
+    // snapshot load has to race every mirror from scratch anyway, despite
+    // having just proven one of them works.
+    if (provider.type === "xtream" && client instanceof XtreamClient) {
+      const active = client.getActiveBaseUrl();
+      if (active) provider = { ...provider, lastWorkingBaseUrl: active };
     }
   } catch (err) {
     return NextResponse.json({ error: messageFor(err) }, { status: 400 });

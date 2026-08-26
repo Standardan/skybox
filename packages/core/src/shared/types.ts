@@ -60,6 +60,16 @@ export interface XtreamCredentials {
   username: string;
   password: string;
   hiddenCategories: string[];
+  /**
+   * Persisted across requests/restarts, unlike XtreamClient's own
+   * in-memory lastWorkingBaseUrl (which only survives for the life of one
+   * client instance) — this is what actually lets "go straight to the
+   * mirror that worked last time" survive the snapshot cache refreshing
+   * every 10 minutes or the server itself restarting, instead of racing
+   * every mirror fresh each time. Written back by iptv-server.ts whenever
+   * a different mirror ends up answering.
+   */
+  lastWorkingBaseUrl?: string;
 }
 
 export interface M3uCredentials {

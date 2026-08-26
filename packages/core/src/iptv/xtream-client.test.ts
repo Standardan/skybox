@@ -196,6 +196,27 @@ describe("XtreamClient mirror failover", () => {
     expect(client.getActiveBaseUrl()).toBeNull();
   });
 
+  it("seeds the active mirror from credentials.lastWorkingBaseUrl and goes straight to it, no race", async () => {
+    // The whole point: a *brand new* client (as if freshly constructed
+    // after a snapshot cache refresh or a server restart, with no memory
+    // of its own) should still skip straight to the mirror persisted from
+    // last time, not race the full list again.
+    fetchMock.mockImplementation((url: string) => {
+      if (url.startsWith("http://dead2.example")) return Promise.resolve(jsonResponse({ user_info: { auth: 1 } }));
+      return Promise.reject(new TypeError("fetch failed"));
+    });
+    const client = new XtreamClient({ ...mirrorCredentials, lastWorkingBaseUrl: "http://dead2.example" });
+
+    await expect(client.validate()).resolves.toBe(true);
+    expect(client.getActiveBaseUrl()).toBe("http://dead2.example");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a persisted lastWorkingBaseUrl that isn't one of the currently configured mirrors", () => {
+    const client = new XtreamClient({ ...mirrorCredentials, lastWorkingBaseUrl: "http://not-configured.example" });
+    expect(client.getActiveBaseUrl()).toBeNull();
+  });
+
   it("falls through dead mirrors and succeeds on the one that answers", async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.startsWith("http://good.example")) {

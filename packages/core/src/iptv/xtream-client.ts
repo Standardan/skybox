@@ -94,8 +94,15 @@ export class XtreamClient implements IptvClient {
 
   private readonly credentials: XtreamCredentials;
 
-  /** The mirror that answered the last successful call, tried first next time. */
-  private lastWorkingBaseUrl: string | null = null;
+  /**
+   * The mirror that answered the last successful call, tried first next
+   * time — seeded from `credentials.lastWorkingBaseUrl` (persisted by the
+   * caller across requests/restarts) rather than always starting cold, so
+   * "go straight to the one that worked last time" actually holds beyond
+   * the lifetime of one XtreamClient instance. `getActiveBaseUrl()` is how
+   * a caller reads this back out to persist it again after it changes.
+   */
+  private lastWorkingBaseUrl: string | null;
 
   constructor(credentials: XtreamCredentials) {
     if (credentials.baseUrls.length === 0) {
@@ -103,6 +110,10 @@ export class XtreamClient implements IptvClient {
     }
     this.credentials = credentials;
     this.providerId = credentials.id;
+    this.lastWorkingBaseUrl =
+      credentials.lastWorkingBaseUrl && credentials.baseUrls.includes(credentials.lastWorkingBaseUrl)
+        ? credentials.lastWorkingBaseUrl
+        : null;
   }
 
   /** Which mirror is currently believed healthy, if any have been tried yet. */

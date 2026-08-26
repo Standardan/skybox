@@ -10,10 +10,10 @@
  * lifetime pays the real cost; everything else within the TTL is instant.
  */
 import "server-only";
-import { createIptvClient } from "@skybox/core/iptv";
+import { createIptvClient, XtreamClient } from "@skybox/core/iptv";
 import { parseXmltv, InMemoryEpgStore } from "@skybox/core/epg";
 import type { Channel, ChannelCategory } from "@skybox/core/shared";
-import { readConfig } from "./config-store";
+import { readConfig, updateConfig } from "./config-store";
 
 const TTL_MS = 10 * 60 * 1000;
 
@@ -56,9 +56,32 @@ async function fetchEpgXml(baseUrl: string, username: string, password: string):
  * but run in parallel with `getChannels()`/`getCategories()` instead of
  * waiting for those to resolve a "known good" mirror first — halves cold-start
  * latency on a fresh cache (each leg is otherwise a ~15s-worst-case fetch).
+ *
+ * `preferredBaseUrl` — the persisted mirror that worked last time (see
+ * loadSnapshot below) — is tried alone first, same "go straight to the one
+ * that worked last time, only fall back to trying the rest if that one's
+ * actually down now" behavior XtreamClient's own withFailover already has
+ * for the channel/category calls. Only races the remaining candidates when
+ * there's no preferred mirror yet, or it just failed.
  */
-async function fetchEpgFromAnyMirror(baseUrls: string[], username: string, password: string): Promise<InMemoryEpgStore> {
+async function fetchEpgFromAnyMirror(
+  baseUrls: string[],
+  username: string,
+  password: string,
+  preferredBaseUrl?: string,
+): Promise<InMemoryEpgStore> {
   const store = new InMemoryEpgStore();
+
+  if (preferredBaseUrl && baseUrls.includes(preferredBaseUrl)) {
+    try {
+      store.addProgrammes(parseXmltv(await fetchEpgXml(preferredBaseUrl, username, password)));
+      return store;
+    } catch {
+      // Fall through to racing the rest below.
+    }
+  }
+
+  const remaining = baseUrls.filter((url) => url !== preferredBaseUrl);
   // Promise.any, not allSettled: allSettled only resolves once EVERY mirror
   // has either answered or hit its own 8s timeout, so with a dozen
   // candidates and only a couple actually alive, this used to block for
@@ -67,7 +90,7 @@ async function fetchEpgFromAnyMirror(baseUrls: string[], username: string, passw
   // could take several seconds even though a good mirror answered
   // instantly. Promise.any resolves the moment any one succeeds.
   try {
-    const xml = await Promise.any(baseUrls.map((baseUrl) => fetchEpgXml(baseUrl, username, password)));
+    const xml = await Promise.any(remaining.map((baseUrl) => fetchEpgXml(baseUrl, username, password)));
     // EPG coverage is known to be spotty for some providers (docs/08-OPEN-QUESTIONS.md
     // OQ-14) — an empty store just means now/next shows nothing, not a crash.
     store.addProgrammes(parseXmltv(xml));
@@ -88,7 +111,7 @@ async function loadSnapshot(): Promise<IptvSnapshot> {
 
   const epgPromise: Promise<InMemoryEpgStore> =
     provider.type === "xtream"
-      ? fetchEpgFromAnyMirror(provider.baseUrls, provider.username, provider.password)
+      ? fetchEpgFromAnyMirror(provider.baseUrls, provider.username, provider.password, provider.lastWorkingBaseUrl)
       : provider.type === "m3u" && provider.epgUrl
         ? fetch(provider.epgUrl)
             .then((res) => (res.ok ? res.text() : null))
@@ -109,6 +132,23 @@ async function loadSnapshot(): Promise<IptvSnapshot> {
     client.getCategories().catch(() => [] as ChannelCategory[]),
     epgPromise,
   ]);
+
+  // Persist whichever mirror actually answered so the *next* snapshot load
+  // (10 minutes from now, or after a restart, when this whole function
+  // runs again from a brand new XtreamClient with no memory of its own)
+  // goes straight to it instead of racing every mirror from scratch again
+  // — the actual "remember the working server, go straight there next
+  // time" behavior a typical IPTV client has, surviving beyond one
+  // in-memory client instance.
+  if (provider.type === "xtream" && client instanceof XtreamClient) {
+    const active = client.getActiveBaseUrl();
+    if (active && active !== provider.lastWorkingBaseUrl) {
+      await updateConfig((c) => ({
+        ...c,
+        iptv: c.iptv.map((p) => (p.id === provider.id && p.type === "xtream" ? { ...p, lastWorkingBaseUrl: active } : p)),
+      }));
+    }
+  }
 
   return {
     channels: channelsResult,
