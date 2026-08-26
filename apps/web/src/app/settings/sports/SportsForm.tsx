@@ -47,6 +47,10 @@ export function SportsForm({ initialSports }: { initialSports: SportsPrefs }) {
 
       <section className={styles.section}>
         <h2 className={styles.sectionTitle}>Leagues</h2>
+        <p className={styles.fieldHint}>
+          Checking a league shows its entire day&rsquo;s slate. You don&rsquo;t need to check one just to follow a
+          team below — a followed team&rsquo;s games show up either way.
+        </p>
         <div className={styles.panel}>
           {LEAGUES.map((league) => {
             const id = `league-${league.id}`;
@@ -94,7 +98,7 @@ export function SportsForm({ initialSports }: { initialSports: SportsPrefs }) {
             disabled={busy || !sports.enabled}
             onPick={async (team) => {
               setBusy(true);
-              setSports(await addTeam(team.name, team.league));
+              setSports(await addTeam(team.name));
               setBusy(false);
             }}
           />

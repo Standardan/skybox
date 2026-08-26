@@ -83,11 +83,11 @@ export default async function SportsPage() {
     );
   }
 
-  if (config.sports.leagues.length === 0) {
+  if (config.sports.leagues.length === 0 && config.sports.teams.length === 0) {
     return (
       <EmptyState
-        title="No leagues followed yet"
-        body="Follow a league in Settings → Sports to see today's games here."
+        title="No leagues or teams followed yet"
+        body="Follow a league or a team in Settings → Sports to see today's games here."
         showSettingsLink
       />
     );
@@ -99,7 +99,7 @@ export default async function SportsPage() {
     return (
       <EmptyState
         title="No games today"
-        body="Your followed leagues don't have any games scheduled for today."
+        body="Nothing scheduled today for your followed leagues or teams."
       />
     );
   }

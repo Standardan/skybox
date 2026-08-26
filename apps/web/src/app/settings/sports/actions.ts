@@ -24,18 +24,17 @@ export async function toggleLeague(leagueId: string, followed: boolean): Promise
 }
 
 /**
- * `league` comes from the searchable team picker (a real ESPN league id),
- * not typed — and gets auto-enabled alongside the team. Without this, a
- * followed team whose league was never separately toggled on contributes
- * zero games to Today's Games (getTodaysGames only fetches enabled
- * leagues), which looked like "no games today" even on a real game day.
+ * A followed team's games show up regardless of whether its league is
+ * separately checked (see getTodaysMatchedGames in sports-server.ts) — so
+ * following a team never needs to touch `leagues` here. `league` still
+ * comes back from the searchable team picker (a real ESPN league id), but
+ * it's only used there for display; nothing here needs to persist it.
  */
-export async function addTeam(name: string, league?: string): Promise<SportsPrefs> {
+export async function addTeam(name: string): Promise<SportsPrefs> {
   const trimmed = name.trim();
   const config = await updateConfig((c) => {
     if (!trimmed || c.sports.teams.includes(trimmed)) return c;
-    const leagues = league && !c.sports.leagues.includes(league) ? [...c.sports.leagues, league] : c.sports.leagues;
-    return { ...c, sports: { ...c.sports, teams: [...c.sports.teams, trimmed], leagues } };
+    return { ...c, sports: { ...c.sports, teams: [...c.sports.teams, trimmed] } };
   });
   return config.sports;
 }

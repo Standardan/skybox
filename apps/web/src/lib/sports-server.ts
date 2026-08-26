@@ -81,32 +81,51 @@ function normalize(value: string): string {
   return value.trim().toLowerCase();
 }
 
-/** Case-insensitive substring match, either direction, against name or abbreviation. */
+/**
+ * Case-insensitive exact match against name or abbreviation — not a
+ * substring match. Followed teams come from the real ESPN search picker
+ * (D-024), so they're always spelled exactly right; a raw substring check
+ * doesn't need that slack and actively backfires on abbreviations, e.g.
+ * the Dodgers' "LAD" is a substring of "Phila-LAD-elphia", so it was
+ * matching a Phillies follower to every Dodgers game too.
+ */
 function teamIsFollowed(team: { name: string; abbreviation?: string }, followedTeams: string[]): boolean {
   const name = normalize(team.name);
   const abbr = team.abbreviation ? normalize(team.abbreviation) : null;
   return followedTeams.some((raw) => {
     const needle = normalize(raw);
     if (!needle) return false;
-    if (name.includes(needle) || needle.includes(name)) return true;
-    if (abbr && (abbr.includes(needle) || needle.includes(abbr))) return true;
-    return false;
+    return name === needle || abbr === needle;
   });
 }
 
 /**
- * Today's games for the followed leagues (D3), each with `matchedChannels`
- * populated (D4) via the real network/EPG-title/manual-override pipeline,
- * filtered to followed teams when any are set (D2), sorted by start time.
+ * Today's games (D3), each with `matchedChannels` populated (D4) via the
+ * real network/EPG-title/manual-override pipeline, sorted by start time.
  * Returns `[]` whenever sports is off or nothing is followed (D8) — a
  * normal, fully-supported state, not an error.
+ *
+ * "Leagues" and "teams" are independent, not nested (D-024 revised): a
+ * checked league means "show me that league's whole slate"; a followed
+ * team means "show me that team's games, wherever it plays" — including a
+ * league you never checked. Earlier this fetched only checked leagues and
+ * then filtered *all* of them down to followed teams whenever any were
+ * set, which broke both directions at once: unchecking a league hid a
+ * followed team's games entirely (nothing was even fetched for it), and
+ * checking a league still hid the rest of that league's slate the moment
+ * any team anywhere was followed. Fetching every league whenever a team is
+ * followed, then keeping a game if EITHER its league is checked OR it has
+ * a followed team, fixes both.
  */
 export async function getTodaysMatchedGames(): Promise<Game[]> {
   const config = await readConfig();
   if (!config.sports.enabled) return [];
+  if (config.sports.leagues.length === 0 && config.sports.teams.length === 0) return [];
 
   const adapters = getFollowedLeagueAdapters();
-  const games = await getTodaysGames(adapters, config.sports.leagues);
+  const leaguesToFetch =
+    config.sports.teams.length > 0 ? adapters.map((a) => a.league) : config.sports.leagues;
+  const games = await getTodaysGames(adapters, leaguesToFetch);
   if (games.length === 0) return [];
 
   const { channels, epgStore } = await getIptvSnapshot();
@@ -131,10 +150,13 @@ export async function getTodaysMatchedGames(): Promise<Game[]> {
   }
 
   const followedTeams = config.sports.teams;
-  const filtered =
-    followedTeams.length > 0
-      ? games.filter((game) => teamIsFollowed(game.home, followedTeams) || teamIsFollowed(game.away, followedTeams))
-      : games;
+  const followedLeagues = new Set(config.sports.leagues);
+  const filtered = games.filter(
+    (game) =>
+      followedLeagues.has(game.league) ||
+      teamIsFollowed(game.home, followedTeams) ||
+      teamIsFollowed(game.away, followedTeams),
+  );
 
   return filtered.slice().sort((a, b) => a.startTime - b.startTime);
 }

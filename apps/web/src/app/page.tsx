@@ -109,7 +109,7 @@ export default async function HomePage() {
 
   const [cinemeta, sportsResult] = await Promise.all([
     getCinemetaAddon(),
-    config.sports.enabled && config.sports.leagues.length > 0
+    config.sports.enabled && (config.sports.leagues.length > 0 || config.sports.teams.length > 0)
       ? Promise.all([getTodaysMatchedGames(), getIptvSnapshot()])
       : Promise.resolve(null),
   ]);
