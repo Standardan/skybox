@@ -23,7 +23,7 @@ import path from "node:path";
 
 const DEFAULT_REPO = "Standardan/skybox";
 const DEFAULT_VERSION_FILE = "/app/VERSION.txt";
-const CHECK_TTL_MS = 60 * 60 * 1000; // don't hit GitHub more than once an hour
+const CHECK_TTL_MS = 10 * 60 * 1000; // don't hit GitHub more than once every 10min
 
 export interface UpdateStatus {
   currentVersion: string | null;
