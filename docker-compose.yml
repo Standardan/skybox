@@ -2,7 +2,14 @@ services:
   skybox:
     build: .
     ports:
-      - "3000:3000"
+      # Only the left (host) side is changeable — the app always listens on
+      # 3000 *inside* the container regardless. If something else on your
+      # server already uses 3000, create a `.env` file next to this one
+      # containing `SKYBOX_PORT=8088` (or whichever port you want) — no
+      # edit to this file needed, so a future `git pull` never conflicts
+      # with your choice. Caddy (below) talks to this container directly
+      # over Docker's internal network either way, unaffected by this.
+      - "${SKYBOX_PORT:-3000}:3000"
     volumes:
       # Everything real (accounts, debrid/IPTV credentials, watch history)
       # lives here — back this up if you back up anything.

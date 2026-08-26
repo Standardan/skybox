@@ -212,7 +212,8 @@ This adds one more small container whose only job is applying updates when you c
 
 ## Troubleshooting
 
-- **The page won't load at all.** Check your VPS provider's Firewall/Security Group settings and make sure the ports you're using are allowed in (3000 for IP-only access, or 80 and 443 if you set up a domain).
+- **The page won't load at all.** Check your VPS provider's Firewall/Security Group settings and make sure the ports you're using are allowed in (3000 for IP-only access, or 80 and 443 if you set up a domain). If you installed something like Coolify, it may have also set up its own firewall (`ufw`) on the server that only allows a smaller set of ports by default — run `sudo ufw status` to check.
+- **Something else on the server already uses port 3000.** Create a file named `.env` next to `docker-compose.yml` (copy `.env.example` as a starting point) containing `SKYBOX_PORT=8088` (or any free port), then `docker compose up -d`. Skybox will be reachable at that port instead — nothing else changes.
 - **HTTPS/certificate errors right after Step 7.** Give DNS a bit longer to propagate (see Step 6), then re-run `docker compose --profile https up -d`. Caddy retries automatically.
 - **Forgot the admin password.** On the server, run `nano data/users.json`, find the account's entry, and delete its whole `{ ... }` block from the list (careful to keep the surrounding `[` and `]` and commas valid), save (Ctrl+O, Enter, Ctrl+X), then `docker compose restart skybox`. If that was the only account, Skybox will show the first-run setup screen again on next visit.
 - **A live channel won't play, or feels slow to load a channel list.** Some IPTV providers are simply unreliable moment to moment — try a different channel, or wait and retry. This isn't unique to Skybox.
