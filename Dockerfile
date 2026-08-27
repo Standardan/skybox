@@ -45,6 +45,20 @@ RUN groupadd --system --gid 1001 skybox && useradd --system --uid 1001 --gid sky
 # acceleration for that) — audio-only remux is the part that's actually
 # achievable here.
 COPY --from=mwader/static-ffmpeg:9.0.1 /ffmpeg /usr/local/bin/ffmpeg
+# Real production error this fixes: ffmpeg's own TLS library failed to
+# verify the debrid CDN's certificate ("SSL routines::certificate verify
+# failed") on every single source, while Node's own fetch() — used by
+# stream-proxy's plain (non-remux) passthrough — succeeded against the
+# exact same URLs seconds later. That split confirms real CA certs exist
+# in this image (Node found them fine); ffmpeg's statically-linked TLS
+# library just wasn't looking in the right place for them. static-ffmpeg
+# is built in its own (non-Debian) environment with its own compiled-in
+# default cert path, which doesn't necessarily match where node:22-slim
+# (Debian) actually keeps its CA bundle — explicitly pointing both common
+# OpenSSL env vars at the real Debian path sidesteps whatever the
+# binary's own built-in default was.
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_DIR=/etc/ssl/certs
 # --chown so the unprivileged `skybox` user (below) can actually write into
 # these at runtime — Next lazily creates apps/web/.next/cache the first
 # time it caches an optimized image, and a root-owned tree it can't write
