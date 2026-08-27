@@ -126,9 +126,10 @@ export function Player({
           hls.loadSource(source.url);
           hls.attachMedia(video);
           hls.on(Hls.Events.ERROR, (_evt, data) => {
-            if (data.fatal) handleFailure();
+            if (data.fatal) handleFailure(data);
           });
         } else {
+          console.error("[Player] hls.js reports this browser can't play HLS at all", { url: source.url });
           setErrored(true);
         }
       });
@@ -146,19 +147,36 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.url, source.format]);
 
-  const handleFailure = useCallback(() => {
-    const video = videoRef.current;
-    if (!retried && video) {
-      // One same-source retry (transient network blip) before escalating to
-      // the caller's next-best-source path — F6, never a dead black screen.
-      setRetried(true);
-      video.load();
-      video.play().catch(() => setErrored(true));
-      return;
-    }
-    setErrored(true);
-    onSourceFailed?.();
-  }, [retried, onSourceFailed]);
+  const handleFailure = useCallback(
+    (hlsErrorData?: unknown) => {
+      const video = videoRef.current;
+      // This used to discard whatever actually went wrong, so "This source
+      // failed to play" was a dead end to debug from the outside — no way
+      // to tell a real network/manifest error from something else. Real
+      // MediaError code/message (native <video>) or hls.js's own error
+      // object (fatal network/media/other errors, with a `details` string
+      // like manifestLoadError/bufferStalledError/etc.) now land in the
+      // browser console with the source URL, so a report like "every
+      // channel fails" is actually diagnosable.
+      console.error("[Player] playback failed", {
+        url: source.url,
+        format: source.format,
+        videoError: video?.error ? { code: video.error.code, message: video.error.message } : null,
+        hlsErrorData,
+      });
+      if (!retried && video) {
+        // One same-source retry (transient network blip) before escalating to
+        // the caller's next-best-source path — F6, never a dead black screen.
+        setRetried(true);
+        video.load();
+        video.play().catch(() => setErrored(true));
+        return;
+      }
+      setErrored(true);
+      onSourceFailed?.();
+    },
+    [retried, onSourceFailed, source.url, source.format],
+  );
 
   // --- chrome auto-hide ----------------------------------------------------
   const wakeChrome = useCallback(() => {
@@ -301,7 +319,7 @@ export function Player({
           }
         }}
         onVolumeChange={(e) => setVolume(e.currentTarget.volume)}
-        onError={handleFailure}
+        onError={() => handleFailure()}
         onClick={togglePlay}
       />
 
