@@ -981,19 +981,6 @@ export function PlaybackControls({
           playing one of these.
         </p>
       )}
-      {trailerSkipped && (
-        <p className={styles.message}>
-          Skipped a source that turned out to be a trailer, not the full movie — its actual length didn&rsquo;t
-          match. Automatically tried another one.
-        </p>
-      )}
-      {noAudioSkipped && (
-        <p className={styles.message}>
-          Skipped a source with no audio — the browser confirmed it couldn&rsquo;t find a playable audio track,
-          even after automatic conversion. Automatically tried another one.
-        </p>
-      )}
-
       {sourcesOpen && (
         // Fixed positioning (not normal flow) so this escapes TitleHero's
         // overflow-hidden, bottom-anchored content box — otherwise a list
@@ -1051,6 +1038,24 @@ export function PlaybackControls({
       {(resolvingIndices.size > 0 || playerSource) && (
         <div className={styles.playerOverlay}>
           <div className={styles.playerFrame}>
+            {/* Real report: these persistent skip notices used to render in normal page flow,
+                but the fixed full-screen overlay below (added for the "Testing sources…" screen)
+                now covers that entire area for as long as ANY resolve/playback attempt is active
+                — which is nearly always, once Play is clicked. They were rendering, just completely
+                hidden behind this overlay the whole time. Moved inside it so they're actually
+                visible, in both the testing and revealed states. */}
+            {trailerSkipped && (
+              <p className={styles.audioWarningBanner} role="status">
+                Skipped a source that turned out to be a trailer, not the full movie — its actual length
+                didn&rsquo;t match. Automatically tried another one.
+              </p>
+            )}
+            {noAudioSkipped && (
+              <p className={styles.audioWarningBanner} role="status">
+                Skipped a source with no audio — the browser confirmed it couldn&rsquo;t find a playable audio
+                track, even after automatic conversion. Automatically tried another one.
+              </p>
+            )}
             {!playerSource && (
               // No candidate has resolved yet — nothing to mount/hide behind, just the screen itself.
               // This is a fixed, full-screen overlay (see .playerOverlay), so the Play/Stop row above

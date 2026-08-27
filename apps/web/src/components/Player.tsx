@@ -252,16 +252,57 @@ export function Player({
     const video = videoRef.current;
     if (!video || !onNoAudioTrackDetected) return;
 
-    const POLL_INTERVAL_MS = 2000;
-    const MAX_CHECKS = 15; // ~30s of real playback before giving up either way
-    const CONSECUTIVE_SILENT_TO_FIRE = 2; // debounce against a transient reading right as playback starts
+    // Real report: a silent source used to get revealed (onPlaybackReady
+    // firing on the native `playing` event, independent of this check)
+    // and keep visibly/audibly playing for several seconds before this
+    // poll caught up and PlaybackControls auto-skipped it — "it shouldn't
+    // have let me even press play and start watching it." Fixed by making
+    // THIS check the gate for revealing at all, when it's able to run:
+    // reveal (fire onPlaybackReady) only once audio is actually confirmed
+    // present, or once this gives up waiting (fail open, same reasoning
+    // as PlaybackControls' own SOURCE_READY_FALLBACK_MS — under-waiting
+    // costs an unnecessary skip at worst, over-waiting traps the viewer
+    // behind a loading screen), or immediately if this browser can't run
+    // the check at all (nothing to gain by waiting). Confirmed silence
+    // skips straight to the next candidate — never revealed to begin
+    // with, not revealed-then-retroactively-hidden.
+    //
+    // Detection can't happen before real playback starts (mozHasAudio/
+    // webkitAudioDecodedByteCount are meaningless until frames are
+    // actually decoding), but once it can, it should be fast — shrunk the
+    // interval 5x (2000ms -> 400ms) and upped the consecutive-check count
+    // (2 -> 3) so the debounce against one transient bad reading is if
+    // anything MORE robust, while the worst-case time-to-confirm-audio
+    // drops from ~4s to ~1.2s. MAX_CHECKS scaled to preserve the same
+    // ~30s overall give-up window.
+    const POLL_INTERVAL_MS = 400;
+    const MAX_CHECKS = 75; // ~30s of real playback before giving up either way
+    const CONSECUTIVE_SILENT_TO_FIRE = 3; // debounce against a transient reading right as playback starts
     let checks = 0;
     let consecutiveSilent = 0;
     let poll: ReturnType<typeof setInterval> | null = null;
+    let settled = false; // revealed or skipped — only one of those, ever, per source
 
     function stopPolling() {
       if (poll) clearInterval(poll);
       poll = null;
+    }
+
+    function reveal() {
+      if (settled) return;
+      settled = true;
+      stopPolling();
+      if (onPlaybackReady && !hasFiredPlaybackReady.current) {
+        hasFiredPlaybackReady.current = true;
+        onPlaybackReady();
+      }
+    }
+
+    function skipSilent() {
+      if (settled) return;
+      settled = true;
+      stopPolling();
+      onNoAudioTrackDetected?.();
     }
 
     // Fires as soon as N consecutive checks agree on silence — whether
@@ -269,7 +310,7 @@ export function Player({
     // (settles late, e.g. over a slow proxied stream) — rather than only
     // ever firing right at the end of the polling window.
     function checkForSilence() {
-      if (!video) return stopPolling();
+      if (!video || settled) return stopPolling();
       checks++;
       const v = video as unknown as { mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number };
       let silentThisCheck: boolean | null = null;
@@ -278,20 +319,16 @@ export function Player({
       } else if (typeof v.webkitAudioDecodedByteCount === "number") {
         silentThisCheck = v.webkitAudioDecodedByteCount === 0;
       } else {
-        return stopPolling(); // neither property supported (e.g. Chrome) — nothing to poll for
+        return reveal(); // neither property supported (e.g. some browsers) — nothing to gain by waiting
       }
 
       if (silentThisCheck) {
         consecutiveSilent++;
-        if (consecutiveSilent >= CONSECUTIVE_SILENT_TO_FIRE) {
-          onNoAudioTrackDetected?.();
-          stopPolling();
-        }
+        if (consecutiveSilent >= CONSECUTIVE_SILENT_TO_FIRE) return skipSilent();
       } else {
-        consecutiveSilent = 0; // confirmed real decoded audio — stop suspecting silence
-        stopPolling();
+        return reveal(); // confirmed real decoded audio
       }
-      if (checks >= MAX_CHECKS) stopPolling();
+      if (checks >= MAX_CHECKS) return reveal(); // give up waiting — fail open, not closed
     }
 
     function onPlaying() {
@@ -497,7 +534,13 @@ export function Player({
         }}
         onVolumeChange={(e) => setVolume(e.currentTarget.volume)}
         onPlaying={() => {
-          if (onPlaybackReady && !hasFiredPlaybackReady.current) {
+          // When a caller wants audio-silence detection (PlaybackControls,
+          // via onNoAudioTrackDetected), THAT effect owns revealing —
+          // gated on audio actually being confirmed present, so a silent
+          // source is never shown at all rather than shown-then-hidden.
+          // Callers that don't ask for audio detection (e.g. live TV)
+          // keep the old direct behavior: reveal immediately.
+          if (onPlaybackReady && !onNoAudioTrackDetected && !hasFiredPlaybackReady.current) {
             hasFiredPlaybackReady.current = true;
             onPlaybackReady();
           }
