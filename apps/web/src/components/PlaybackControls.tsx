@@ -453,6 +453,17 @@ export function PlaybackControls({
   const [resolvingIndices, setResolvingIndices] = useState<ReadonlySet<number>>(new Set());
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [playerSource, setPlayerSource] = useState<PlayerSource | null>(null);
+  // Real feature request: cycling through bad candidates used to mean
+  // briefly flashing a half-broken <video> (black/frozen frame, player
+  // chrome visible) for each one before auto-retry moved on — confusing
+  // and janky. False from the moment ANY new attempt starts (a resolve
+  // begins, or a resolved source is handed to <Player>) until Player's
+  // onPlaybackReady confirms real frames are actually rendering — a
+  // resolve succeeding is NOT enough on its own, since that's exactly
+  // what "resolved fine, black screen anyway" bugs have looked like.
+  // While false, a clean "Testing sources…" screen covers the player
+  // area instead of exposing the attempt in progress.
+  const [sourceReady, setSourceReady] = useState(false);
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
   // The REAL resolved filename (not a title guess) — lets the container
   // warning below be reliable instead of a heuristic, since this is the
@@ -540,6 +551,7 @@ export function PlaybackControls({
       abortRef.current = controller;
 
       setResolveError(null);
+      setSourceReady(false);
       const candidates = streams.slice(startIndex);
       const { winner, lastFailure } = await racePool<StremioStream, ResolveResponse>({
         candidates,
@@ -598,7 +610,13 @@ export function PlaybackControls({
     setResolvingIndices(new Set());
     setResolveError(null);
     setSourcesOpen(false);
-  }, []);
+    // A resolved-but-not-yet-confirmed-playing source (still behind the
+    // "Testing sources…" screen — see sourceReady) is also an in-progress
+    // attempt as far as "Stop" is concerned, not something already handed
+    // to the user. A genuinely confirmed, currently-playing source is left
+    // alone — this only ever cancels the testing/waiting phase.
+    if (!sourceReady) setPlayerSource(null);
+  }, [sourceReady]);
 
   // No unmount cleanup existed before this — a stuck/slow resolve just
   // kept running invisibly. More important now that a pool run can have
@@ -785,24 +803,25 @@ export function PlaybackControls({
     return <p className={styles.message}>No sources found for this title yet.</p>;
   }
 
+  // "Busy" spans both the resolve step AND the brief window after a
+  // resolve succeeds but before Player confirms it's actually playing
+  // (sourceReady) — picking a different source, or clicking Play again,
+  // during either phase would just race against the in-flight attempt.
+  const isBusy = resolvingIndices.size > 0 || (playerSource !== null && !sourceReady);
+
   return (
     <div>
       <div className={styles.row}>
-        <button
-          type="button"
-          className={styles.primary}
-          onClick={() => void playIndex(0)}
-          disabled={resolvingIndices.size > 0}
-        >
-          {resolvingIndices.size > 0 ? "Resolving…" : "Play"}
+        <button type="button" className={styles.primary} onClick={() => void playIndex(0)} disabled={isBusy}>
+          {isBusy ? "Resolving…" : "Play"}
         </button>
         <button
           type="button"
           className={styles.secondary}
-          onClick={() => (resolvingIndices.size > 0 ? stopResolving() : setSourcesOpen((open) => !open))}
+          onClick={() => (isBusy ? stopResolving() : setSourcesOpen((open) => !open))}
           aria-expanded={sourcesOpen}
         >
-          {resolvingIndices.size > 0 ? "Stop" : sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
+          {isBusy ? "Stop" : sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
         </button>
       </div>
 
@@ -840,11 +859,7 @@ export function PlaybackControls({
         <div className={styles.sourcesOverlay} onClick={stopResolving}>
           <div className={styles.sourcesPanel} onClick={(e) => e.stopPropagation()}>
             <div className={styles.sourcesPanelHeader}>
-              {resolvingIndices.size > 0 ? (
-                <span className={styles.sourceText}>Trying sources…</span>
-              ) : (
-                <span />
-              )}
+              {isBusy ? <span className={styles.sourceText}>Trying sources…</span> : <span />}
               <button type="button" className={styles.sourcesClose} onClick={stopResolving} aria-label="Close">
                 ×
               </button>
@@ -874,7 +889,7 @@ export function PlaybackControls({
                     type="button"
                     className={styles.sourcePlay}
                     onClick={() => void playIndex(index)}
-                    disabled={resolvingIndices.size > 0}
+                    disabled={isBusy}
                   >
                     {resolvingIndices.has(index) ? "Resolving…" : "Play"}
                   </button>
@@ -885,85 +900,112 @@ export function PlaybackControls({
         </div>
       )}
 
-      {playerSource && (
+      {(resolvingIndices.size > 0 || playerSource) && (
         <div className={styles.playerOverlay}>
           <div className={styles.playerFrame}>
-            {!playingRemuxed && playingFilename && isLikelyUnplayableContainer(playingFilename) && (
-              <p className={styles.audioWarningBanner} role="status">
-                Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV (or similar)
-                container — resolving worked and the file is real, but browsers can&rsquo;t play that container
-                directly, so nothing loads. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different
-                source from &ldquo;All sources&rdquo; — an MP4/WEBRip release is more likely to actually play.
-              </p>
-            )}
-            {/* Should be rare: resolve-stream decides to remux MKV whenever this browser can't
-                play it natively, so `playingRemuxed` normally covers this. This only fires if
-                that server-side remux itself failed and fell back to a raw passthrough (see
-                stream-proxy.ts) — the file arrived as unconverted MKV despite the decision. */}
-            {!playingRemuxed && playingFilename && mkvUnplayable && isMkvContainer(playingFilename) && (
-              <p className={styles.audioWarningBanner} role="status">
-                Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV container this
-                browser can&rsquo;t play natively, and the server-side conversion that usually fixes this didn&rsquo;t
-                complete. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different source from
-                &ldquo;All sources&rdquo;, or use Firefox 145+, which plays MKV directly.
-              </p>
-            )}
-            {hevcUnplayable && playingIndex !== null && streams[playingIndex] && hasLikelyHevcVideo(streams[playingIndex]!) && (
-              <p className={styles.audioWarningBanner} role="status">
-                Black or frozen screen? This release is encoded in HEVC/x265 video, which this browser can&rsquo;t
-                decode at all — very common for 4K/HDR/Dolby Vision releases. This isn&rsquo;t a Skybox bug to keep
-                retrying past. Try a different source from &ldquo;All sources&rdquo; (look for x264/H.264/AVC
-                instead), or open Skybox in Chrome, Edge, or Safari, which can usually play HEVC.
-              </p>
-            )}
-            {playingRemuxed && (
-              <p className={styles.audioWarningBanner} role="status">
-                This source needed automatic conversion to play in this browser (an incompatible audio format,
-                container, or both) — it&rsquo;s being fixed on the fly. May take a moment longer to start, and the
-                scrub bar won&rsquo;t seek correctly on this source.
-              </p>
-            )}
-            {noAudioTrackDetected && (
-              <p className={styles.audioWarningBanner} role="status">
-                No sound? The browser confirms it couldn&rsquo;t find a playable audio track, even after automatic
-                conversion — the video itself is fine. Try a different source from &ldquo;All sources&rdquo;.
-              </p>
-            )}
-            {showNextEpisodePrompt && nextVideoId && (
-              <div className={styles.nextEpisodePrompt} role="status">
-                <span className={styles.sourceText}>
-                  {nextEpisodeLabel ? `Up next: ${nextEpisodeLabel}` : "Up next"}
-                </span>
-                <button type="button" className={styles.primary} onClick={handleNextEpisode}>
-                  Next Episode
-                </button>
+            {!playerSource && (
+              // No candidate has resolved yet — nothing to mount/hide behind, just the screen itself.
+              <div className={styles.testingSourcesScreen} role="status">
+                <div className={styles.testingSourcesSpinner} aria-hidden="true" />
+                <p>Testing sources…</p>
               </div>
             )}
-            <Player
-              source={playerSource}
-              title={title}
-              poster={poster}
-              onClose={() => setPlayerSource(null)}
-              onSourceFailed={handleSourceFailed}
-              onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
-              onLikelyTrailer={handleLikelyTrailer}
-              expectedRuntimeMinutes={expectedRuntimeMinutes}
-              onConfirmedWorking={handleConfirmedWorking}
-              onProgress={(positionSec, durationSec) => {
-                reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
-                if (
-                  !hasTriggeredPrefetchResolve.current &&
-                  nextVideoId &&
-                  durationSec > 0 &&
-                  durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
-                ) {
-                  hasTriggeredPrefetchResolve.current = true;
-                  void resolveNextEpisodePrefetch();
-                }
-              }}
-              startPositionSec={resumePositionSec}
-              onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
-            />
+            {sourceReady && (
+              <>
+                {!playingRemuxed && playingFilename && isLikelyUnplayableContainer(playingFilename) && (
+                  <p className={styles.audioWarningBanner} role="status">
+                    Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV (or similar)
+                    container — resolving worked and the file is real, but browsers can&rsquo;t play that container
+                    directly, so nothing loads. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different
+                    source from &ldquo;All sources&rdquo; — an MP4/WEBRip release is more likely to actually play.
+                  </p>
+                )}
+                {/* Should be rare: resolve-stream decides to remux MKV whenever this browser can't
+                    play it natively, so `playingRemuxed` normally covers this. This only fires if
+                    that server-side remux itself failed and fell back to a raw passthrough (see
+                    stream-proxy.ts) — the file arrived as unconverted MKV despite the decision. */}
+                {!playingRemuxed && playingFilename && mkvUnplayable && isMkvContainer(playingFilename) && (
+                  <p className={styles.audioWarningBanner} role="status">
+                    Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV container this
+                    browser can&rsquo;t play natively, and the server-side conversion that usually fixes this didn&rsquo;t
+                    complete. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different source from
+                    &ldquo;All sources&rdquo;, or use Firefox 145+, which plays MKV directly.
+                  </p>
+                )}
+                {hevcUnplayable &&
+                  playingIndex !== null &&
+                  streams[playingIndex] &&
+                  hasLikelyHevcVideo(streams[playingIndex]!) && (
+                    <p className={styles.audioWarningBanner} role="status">
+                      Black or frozen screen? This release is encoded in HEVC/x265 video, which this browser
+                      can&rsquo;t decode at all — very common for 4K/HDR/Dolby Vision releases. This isn&rsquo;t a
+                      Skybox bug to keep retrying past. Try a different source from &ldquo;All sources&rdquo; (look
+                      for x264/H.264/AVC instead), or open Skybox in Chrome, Edge, or Safari, which can usually
+                      play HEVC.
+                    </p>
+                  )}
+                {playingRemuxed && (
+                  <p className={styles.audioWarningBanner} role="status">
+                    This source needed automatic conversion to play in this browser (an incompatible audio format,
+                    container, or both) — it&rsquo;s being fixed on the fly. May take a moment longer to start, and
+                    the scrub bar won&rsquo;t seek correctly on this source.
+                  </p>
+                )}
+                {noAudioTrackDetected && (
+                  <p className={styles.audioWarningBanner} role="status">
+                    No sound? The browser confirms it couldn&rsquo;t find a playable audio track, even after
+                    automatic conversion — the video itself is fine. Try a different source from &ldquo;All
+                    sources&rdquo;.
+                  </p>
+                )}
+                {showNextEpisodePrompt && nextVideoId && (
+                  <div className={styles.nextEpisodePrompt} role="status">
+                    <span className={styles.sourceText}>
+                      {nextEpisodeLabel ? `Up next: ${nextEpisodeLabel}` : "Up next"}
+                    </span>
+                    <button type="button" className={styles.primary} onClick={handleNextEpisode}>
+                      Next Episode
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+            {playerSource && (
+              <>
+                {!sourceReady && (
+                  <div className={styles.testingSourcesOverlay} role="status">
+                    <div className={styles.testingSourcesSpinner} aria-hidden="true" />
+                    <p>Testing sources…</p>
+                  </div>
+                )}
+                <Player
+                  source={playerSource}
+                  title={title}
+                  poster={poster}
+                  onClose={() => setPlayerSource(null)}
+                  onSourceFailed={handleSourceFailed}
+                  onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
+                  onLikelyTrailer={handleLikelyTrailer}
+                  expectedRuntimeMinutes={expectedRuntimeMinutes}
+                  onPlaybackReady={() => setSourceReady(true)}
+                  onConfirmedWorking={handleConfirmedWorking}
+                  onProgress={(positionSec, durationSec) => {
+                    reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
+                    if (
+                      !hasTriggeredPrefetchResolve.current &&
+                      nextVideoId &&
+                      durationSec > 0 &&
+                      durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
+                    ) {
+                      hasTriggeredPrefetchResolve.current = true;
+                      void resolveNextEpisodePrefetch();
+                    }
+                  }}
+                  startPositionSec={resumePositionSec}
+                  onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
+                />
+              </>
+            )}
           </div>
         </div>
       )}

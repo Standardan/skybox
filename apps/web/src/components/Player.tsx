@@ -61,6 +61,19 @@ export interface PlayerProps {
    */
   onConfirmedWorking?: () => void;
   /**
+   * Fires once per source, the first time the native `playing` event
+   * confirms real frames have started rendering — NOT the same as a
+   * resolve succeeding (a resolved URL can still fail to decode). Real
+   * feature request: replace the confusing flash of a half-broken player
+   * (black/frozen frame, controls visible) while cycling through bad
+   * candidates with a clean "Testing sources…" screen that only lifts
+   * once this fires. Deliberately a much lower bar than
+   * onConfirmedWorking's CONFIRMED_WORKING_THRESHOLD_SEC — this is about
+   * hiding the resolve/attempt churn, not about deciding whether to
+   * remember this source for next time.
+   */
+  onPlaybackReady?: () => void;
+  /**
    * Fires periodically (roughly every 15s, throttled) and on pause/unmount —
    * never on every timeupdate tick — so the caller can persist resume
    * position (B7). Omit in live-TV mode; there's nothing to "continue
@@ -106,6 +119,7 @@ export function Player({
   onNoAudioTrackDetected,
   onLikelyTrailer,
   expectedRuntimeMinutes,
+  onPlaybackReady,
   onConfirmedWorking,
   onProgress,
   startPositionSec,
@@ -116,6 +130,7 @@ export function Player({
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSeekedToStart = useRef(false);
   const hasConfirmedWorking = useRef(false);
+  const hasFiredPlaybackReady = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -159,6 +174,7 @@ export function Player({
     // should still resume at the same spot — same title, different URL.
     hasSeekedToStart.current = false;
     hasConfirmedWorking.current = false;
+    hasFiredPlaybackReady.current = false;
 
     let hls: import("hls.js").default | null = null;
 
@@ -480,6 +496,12 @@ export function Player({
           }
         }}
         onVolumeChange={(e) => setVolume(e.currentTarget.volume)}
+        onPlaying={() => {
+          if (onPlaybackReady && !hasFiredPlaybackReady.current) {
+            hasFiredPlaybackReady.current = true;
+            onPlaybackReady();
+          }
+        }}
         onEnded={() => onEnded?.()}
         onError={() => handleFailure()}
         onClick={togglePlay}

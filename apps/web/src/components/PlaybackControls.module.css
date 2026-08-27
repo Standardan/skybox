@@ -174,6 +174,47 @@
 .playerFrame {
   width: 100%;
   max-width: 1600px;
+  position: relative;
+}
+
+.testingSourcesScreen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 40vh;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+  text-align: center;
+}
+
+.testingSourcesSpinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid rgb(255 255 255 / 0.15);
+  border-top-color: var(--accent);
+  animation: testingSourcesSpin 0.8s linear infinite;
+}
+
+@keyframes testingSourcesSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Covers the still-mounted (but not yet confirmed-playing) <video> so the
+   user never sees a raw/broken frame mid-attempt — only revealed once
+   Player's onPlaybackReady confirms real decode/render, not just resolve. */
+.testingSourcesOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: var(--void);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .audioWarning {
