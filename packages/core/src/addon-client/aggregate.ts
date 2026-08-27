@@ -21,19 +21,17 @@ const CACHED_PATTERN = /\[?\b(?:rd|pm|ad|tb|dl)\+\]?|⚡|\bcached\b/i;
 const LIKELY_INCOMPATIBLE_AUDIO_PATTERN = /\b(?:ddp?\d(?:\.\d)?|dd\+|e-?ac-?3|eac-?3|ac-?3|dts(?:-?hd)?(?:\.?ma)?|true-?hd|atmos)\b/i;
 
 /**
- * Container formats no major browser's native <video> element can parse
- * at all — MKV above all, since it's the dominant container for anything
- * above WEBRip quality on these release ecosystems. This isn't a codec
- * problem (the video/audio inside might be perfectly playable); the
- * browser's own demuxer just doesn't recognize the container, so nothing
- * loads at all — no error event, no picture, no duration, controls that
- * don't do anything because there's nothing actually loaded to control.
- * Real report this addresses: "resolving works now, but the player opens
- * to a black/frozen screen and pause/unpause don't do anything" — after
- * confirming resolve itself succeeds, that's exactly what an unsupported
- * container looks like, not a Skybox bug. mp4/m4v/webm/mov are fine.
+ * Container formats genuinely no major browser's native <video> element
+ * can parse, in ANY configuration — unlike MKV (see isMkvContainer,
+ * below), there's no browser-specific exception for any of these; every
+ * one of Chrome/Edge/Safari/Firefox refuses all of them outright,
+ * regardless of the codecs inside. Real report this addresses:
+ * "resolving works now, but the player opens to a black/frozen screen
+ * and pause/unpause don't do anything" — after confirming resolve
+ * itself succeeds, that's exactly what an unsupported container looks
+ * like, not a Skybox bug. mp4/m4v/webm/mov are fine.
  */
-const UNPLAYABLE_CONTAINER_EXTENSIONS = new Set(["mkv", "avi", "wmv", "flv", "ts", "m2ts", "vob", "rm", "rmvb", "divx"]);
+const UNPLAYABLE_CONTAINER_EXTENSIONS = new Set(["avi", "wmv", "flv", "ts", "m2ts", "vob", "rm", "rmvb", "divx"]);
 
 /** Checked against the REAL resolved filename (not a title guess) — reliable, since this is the file that's actually about to be handed to <video>. */
 export function isLikelyUnplayableContainer(filename: string): boolean {
@@ -47,10 +45,10 @@ export function isLikelyUnplayableContainer(filename: string): boolean {
  * filename — many Stremio stream titles are literally (or end with) the
  * actual torrent filename, extension included. Used only as a ranking
  * signal (prefer a source that looks natively container-compatible from
- * the start): unlike HEVC, an MKV/AVI/etc container is fixable —
- * stream-proxy's remux path outputs MP4 regardless of the input
- * container — so this is a "nicer to have, avoids an ffmpeg round-trip"
- * preference, never a reason to hide a source outright.
+ * the start): these ARE fixable via remux (stream-proxy's remux path
+ * outputs MP4 regardless of the input container), so this is only a
+ * "nicer to have, avoids an ffmpeg round-trip" preference, never a
+ * reason to hide a source outright.
  */
 const LIKELY_UNPLAYABLE_CONTAINER_PATTERN = new RegExp(
   `\\.(?:${Array.from(UNPLAYABLE_CONTAINER_EXTENSIONS).join("|")})\\b`,
@@ -60,6 +58,30 @@ const LIKELY_UNPLAYABLE_CONTAINER_PATTERN = new RegExp(
 /** Exported so UI layers can rank/display using the exact same pre-resolve heuristic — see LIKELY_UNPLAYABLE_CONTAINER_PATTERN. */
 export function hasLikelyUnplayableContainerHint(stream: StremioStream): boolean {
   return LIKELY_UNPLAYABLE_CONTAINER_PATTERN.test(streamText(stream));
+}
+
+/**
+ * MKV was originally lumped in with the genuinely-universal-never-works
+ * containers above — wrong, corrected after a user pushed back with real
+ * evidence. Firefox added native Matroska container demuxing, on by
+ * default since Firefox 145 (Mozilla's own bug tracker, meta-bug
+ * 1422891), for the same codecs it already supports in other containers
+ * (H.264, HEVC, VP8/9, AV1 video; AAC, Opus, Vorbis audio) — this is
+ * genuinely the SAME class of question as HEVC support (see
+ * hasLikelyHevcVideo just below): per-viewer-browser, not a fixed rule.
+ * Chrome/Edge/Safari still have no general MKV support at all (Chrome
+ * only demuxes the WebM *profile* of Matroska, not arbitrary MKV), so
+ * this stays a real concern for those — just not for every browser.
+ */
+export function isMkvContainer(filename: string): boolean {
+  return filename.split(".").pop()?.toLowerCase() === "mkv";
+}
+
+const LIKELY_MKV_CONTAINER_PATTERN = /\.mkv\b/i;
+
+/** Pre-resolve title-text heuristic sibling to isMkvContainer, same reasoning as hasLikelyUnplayableContainerHint above. */
+export function hasLikelyMkvContainerHint(stream: StremioStream): boolean {
+  return LIKELY_MKV_CONTAINER_PATTERN.test(streamText(stream));
 }
 
 /**

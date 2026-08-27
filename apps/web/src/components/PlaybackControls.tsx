@@ -7,7 +7,9 @@ import {
   hasLikelyIncompatibleAudio,
   hasLikelyHevcVideo,
   hasLikelyUnplayableContainerHint,
+  hasLikelyMkvContainerHint,
   isLikelyUnplayableContainer,
+  isMkvContainer,
   matchesPreferredLanguage,
   LANGUAGE_OPTIONS,
 } from "@skybox/core/addon-client";
@@ -47,6 +49,30 @@ function canBrowserPlayHevc(): boolean {
 }
 
 /**
+ * Real research finding, after a user correctly pushed back on an
+ * earlier "no browser plays MKV" assumption: Firefox added native
+ * Matroska container support, on by default since Firefox 145 (Mozilla
+ * bug tracker meta-bug 1422891) — for the same codecs it already
+ * supports elsewhere (H.264, HEVC, VP8/9, AV1 video; AAC, Opus, Vorbis
+ * audio). Chrome/Edge/Safari still have no general MKV support at all.
+ * Exactly the same class of question as HEVC above: per-viewer-browser,
+ * checked via the real canPlayType() API rather than assumed. `false`
+ * on the SSR guard (unlike HEVC's `true`) is the deliberately safer
+ * default here — under-detecting MKV support just means an unnecessary
+ * remux round-trip, while over-detecting it would mean skipping a
+ * remux a source actually needed and landing back on a black screen.
+ */
+let mkvSupportCache: boolean | null = null;
+function canBrowserPlayMkv(): boolean {
+  if (mkvSupportCache !== null) return mkvSupportCache;
+  if (typeof document === "undefined") return false;
+  const video = document.createElement("video");
+  const support = video.canPlayType('video/x-matroska; codecs="avc1.42E01E, mp4a.40.2"');
+  mkvSupportCache = support === "probably" || support === "maybe";
+  return mkvSupportCache;
+}
+
+/**
  * `aggregateStreams` already ranks cached-first-then-resolution by default
  * (matching the `preferCached: true` default). This re-sorts using the same
  * detection when the user's actual saved preference differs — resolution
@@ -59,6 +85,7 @@ function canBrowserPlayHevc(): boolean {
  */
 function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): PlaybackPrefsResult {
   const hevcUnplayable = !canBrowserPlayHevc();
+  const mkvUnplayable = !canBrowserPlayMkv();
   const sorted = streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
@@ -104,6 +131,16 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
       const aContainer = Number(hasLikelyUnplayableContainerHint(a.stream));
       const bContainer = Number(hasLikelyUnplayableContainerHint(b.stream));
       if (aContainer !== bContainer) return aContainer - bContainer;
+      // Same tiebreaker treatment as the audio/container checks above, not
+      // a hard filter like HEVC — an MKV this browser can't play natively
+      // still plays fine once resolve-stream remuxes it to MP4 server-side
+      // (see stream-proxy.ts), so it's only ranked behind sources that
+      // don't need that round-trip, never hidden.
+      if (mkvUnplayable) {
+        const aMkv = Number(hasLikelyMkvContainerHint(a.stream));
+        const bMkv = Number(hasLikelyMkvContainerHint(b.stream));
+        if (aMkv !== bMkv) return aMkv - bMkv;
+      }
       return a.index - b.index;
     })
     .map(({ stream }) => stream);
@@ -232,6 +269,10 @@ async function resolveStream(stream: StremioStream, signal: AbortSignal): Promis
       // detection this file already runs client-side for ranking/display.
       title: stream.title,
       name: stream.name,
+      // Real per-viewer fact (Firefox 145+ decodes MKV natively, other
+      // browsers don't) — lets resolve-stream skip an unnecessary remux
+      // round-trip when this browser can already play the file as-is.
+      mkvSupported: canBrowserPlayMkv(),
     }),
     signal: AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
   });
@@ -322,6 +363,9 @@ export function PlaybackControls({
   // the HEVC warning below so a viewer whose browser actually plays HEVC
   // fine (Chrome/Edge/Safari, mostly) never sees it.
   const hevcUnplayable = useMemo(() => !canBrowserPlayHevc(), []);
+  // Same reasoning as hevcUnplayable above — gates the MKV warning banner
+  // so a Firefox 145+ viewer who can actually play MKV natively never sees it.
+  const mkvUnplayable = useMemo(() => !canBrowserPlayMkv(), []);
 
   /**
    * A single source's *resolve* step (not playback) failing — e.g. a debrid
@@ -564,6 +608,18 @@ export function PlaybackControls({
                 container — resolving worked and the file is real, but browsers can&rsquo;t play that container
                 directly, so nothing loads. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different
                 source from &ldquo;All sources&rdquo; — an MP4/WEBRip release is more likely to actually play.
+              </p>
+            )}
+            {/* Should be rare: resolve-stream decides to remux MKV whenever this browser can't
+                play it natively, so `playingRemuxed` normally covers this. This only fires if
+                that server-side remux itself failed and fell back to a raw passthrough (see
+                stream-proxy.ts) — the file arrived as unconverted MKV despite the decision. */}
+            {!playingRemuxed && playingFilename && mkvUnplayable && isMkvContainer(playingFilename) && (
+              <p className={styles.audioWarningBanner} role="status">
+                Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV container this
+                browser can&rsquo;t play natively, and the server-side conversion that usually fixes this didn&rsquo;t
+                complete. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different source from
+                &ldquo;All sources&rdquo;, or use Firefox 145+, which plays MKV directly.
               </p>
             )}
             {hevcUnplayable && playingIndex !== null && streams[playingIndex] && hasLikelyHevcVideo(streams[playingIndex]!) && (

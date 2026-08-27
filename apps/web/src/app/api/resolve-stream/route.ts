@@ -4,6 +4,7 @@ import {
   hasLikelyIncompatibleAudio,
   hasMultipleLanguageTracksHint,
   isLikelyUnplayableContainer,
+  isMkvContainer,
 } from "@skybox/core/addon-client";
 import {
   isDebridConnected,
@@ -61,6 +62,8 @@ interface ResolveRequestBody {
   /** Release title/name — used only to decide whether this source's audio needs remuxing (see proxiedVideoUrl below). */
   title?: string;
   name?: string;
+  /** Real per-viewer fact from the client's canPlayType() check — Firefox 145+ decodes MKV natively, other browsers don't. Missing/false means "can't play MKV", the safer default (see PlaybackControls.tsx's canBrowserPlayMkv doc comment). */
+  mkvSupported?: boolean;
 }
 
 interface ResolveSuccess {
@@ -155,7 +158,7 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     return NextResponse.json({ ok: false, message: "Invalid request body.", retryable: false }, { status: 400 });
   }
 
-  const { infoHash, fileIdx, url, title, name } = body;
+  const { infoHash, fileIdx, url, title, name, mkvSupported } = body;
   if (!infoHash && !url) {
     return NextResponse.json(
       { ok: false, message: "This source has no infoHash or url to resolve.", retryable: false },
@@ -197,7 +200,10 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
         `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
       );
       const remux =
-        titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(result.filename) || Boolean(preferredAudioLang);
+        titleSuggestsIncompatibleAudio ||
+        isLikelyUnplayableContainer(result.filename) ||
+        (isMkvContainer(result.filename) && !mkvSupported) ||
+        Boolean(preferredAudioLang);
       return NextResponse.json({
         ok: true,
         playableUrl: proxiedVideoUrl(result.playableUrl, remux, preferredAudioLang),
@@ -221,6 +227,7 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       const remux =
         titleSuggestsIncompatibleAudio ||
         isLikelyUnplayableContainer(unrestricted.filename) ||
+        (isMkvContainer(unrestricted.filename) && !mkvSupported) ||
         Boolean(preferredAudioLang);
       return NextResponse.json({
         ok: true,
@@ -232,7 +239,10 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
 
     const fallbackFilename = url!.split("/").pop() || "stream";
     const remux =
-      titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(fallbackFilename) || Boolean(preferredAudioLang);
+      titleSuggestsIncompatibleAudio ||
+      isLikelyUnplayableContainer(fallbackFilename) ||
+      (isMkvContainer(fallbackFilename) && !mkvSupported) ||
+      Boolean(preferredAudioLang);
     return NextResponse.json({
       ok: true,
       playableUrl: proxiedVideoUrl(url!, remux, preferredAudioLang),

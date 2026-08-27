@@ -5,6 +5,8 @@ import {
   hasLikelyHevcVideo,
   isLikelyUnplayableContainer,
   hasLikelyUnplayableContainerHint,
+  isMkvContainer,
+  hasLikelyMkvContainerHint,
   matchesPreferredLanguage,
   hasMultipleLanguageTracksHint,
 } from "./aggregate.js";
@@ -248,32 +250,36 @@ describe("hasLikelyHevcVideo", () => {
 });
 
 describe("isLikelyUnplayableContainer", () => {
-  it.each(["Movie.2024.1080p.mkv", "Movie.2024.720p.avi", "Old.Show.S01E01.wmv", "Clip.flv", "Recording.ts", "Disc.m2ts"])(
+  it.each(["Movie.2024.720p.avi", "Old.Show.S01E01.wmv", "Clip.flv", "Recording.ts", "Disc.m2ts"])(
     "flags %s",
     (filename) => {
       expect(isLikelyUnplayableContainer(filename)).toBe(true);
     },
   );
 
-  it.each(["Movie.2024.1080p.mp4", "Movie.2024.720p.webm", "Clip.mov", "Movie.2024.m4v"])(
-    "does not flag %s",
-    (filename) => {
-      expect(isLikelyUnplayableContainer(filename)).toBe(false);
-    },
-  );
+  it.each([
+    "Movie.2024.1080p.mp4",
+    "Movie.2024.720p.webm",
+    "Clip.mov",
+    "Movie.2024.m4v",
+    // MKV is NOT universally unplayable — Firefox added native Matroska
+    // support, on by default since Firefox 145 (real research finding,
+    // corrected after a user pushed back on the earlier "no browser
+    // plays MKV" assumption). See isMkvContainer for the browser-aware
+    // check this now lives behind instead.
+    "Movie.2024.1080p.mkv",
+  ])("does not flag %s", (filename) => {
+    expect(isLikelyUnplayableContainer(filename)).toBe(false);
+  });
 
   it("is case-insensitive and handles a bare/missing extension safely", () => {
-    expect(isLikelyUnplayableContainer("Movie.2024.MKV")).toBe(true);
+    expect(isLikelyUnplayableContainer("Movie.2024.AVI")).toBe(true);
     expect(isLikelyUnplayableContainer("no-extension-at-all")).toBe(false);
   });
 });
 
 describe("hasLikelyUnplayableContainerHint", () => {
-  it.each([
-    "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv",
-    "Movie.2024.720p.avi",
-    "Movie.2024.1080p.x264-GROUP.mkv\n👤 40 💾 8 GB",
-  ])("flags %s", (title) => {
+  it.each(["Movie.2024.720p.avi", "Movie.2024.1080p.WEB-DL.x264-GROUP.wmv"])("flags %s", (title) => {
     expect(hasLikelyUnplayableContainerHint({ title } as StremioStream)).toBe(true);
   });
 
@@ -281,9 +287,36 @@ describe("hasLikelyUnplayableContainerHint", () => {
     "Movie.2024.1080p.WEB-DL.x264-GROUP.mp4",
     "Movie.2024.720p.WEBRip.x264-GROUP",
     "Movie.2024.1080p.x264-GROUP.mp4\n👤 40 💾 8 GB",
+    "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv", // see isLikelyUnplayableContainer above
   ])("does not flag %s", (title) => {
     expect(hasLikelyUnplayableContainerHint({ title } as StremioStream)).toBe(false);
   });
+});
+
+describe("isMkvContainer", () => {
+  it.each(["Movie.2024.1080p.mkv", "Movie.2024.MKV"])("flags %s", (filename) => {
+    expect(isMkvContainer(filename)).toBe(true);
+  });
+
+  it.each(["Movie.2024.1080p.mp4", "Movie.2024.avi", "no-extension-at-all"])("does not flag %s", (filename) => {
+    expect(isMkvContainer(filename)).toBe(false);
+  });
+});
+
+describe("hasLikelyMkvContainerHint", () => {
+  it.each([
+    "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv",
+    "Movie.2024.1080p.x264-GROUP.mkv\n👤 40 💾 8 GB",
+  ])("flags %s", (title) => {
+    expect(hasLikelyMkvContainerHint({ title } as StremioStream)).toBe(true);
+  });
+
+  it.each(["Movie.2024.1080p.WEB-DL.x264-GROUP.mp4", "Movie.2024.720p.WEBRip.x264-GROUP"])(
+    "does not flag %s",
+    (title) => {
+      expect(hasLikelyMkvContainerHint({ title } as StremioStream)).toBe(false);
+    },
+  );
 });
 
 describe("matchesPreferredLanguage", () => {
