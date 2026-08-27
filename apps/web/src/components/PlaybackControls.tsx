@@ -6,6 +6,7 @@ import {
   detectResolution,
   hasLikelyIncompatibleAudio,
   hasLikelyHevcVideo,
+  hasLikelyUnplayableContainerHint,
   isLikelyUnplayableContainer,
   matchesPreferredLanguage,
   LANGUAGE_OPTIONS,
@@ -83,6 +84,15 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
       const aAudio = Number(hasLikelyIncompatibleAudio(a.stream));
       const bAudio = Number(hasLikelyIncompatibleAudio(b.stream));
       if (aAudio !== bAudio) return aAudio - bAudio;
+      // A suspected MKV/AVI/etc container is fixable the same way
+      // (stream-proxy's remux outputs MP4 regardless of input container)
+      // — this is a pre-resolve title guess, not the reliable post-resolve
+      // filename check the actual remux decision uses, so it's only a
+      // preference (skip the ffmpeg round-trip when a native-container
+      // source is otherwise equal), never a reason to hide anything.
+      const aContainer = Number(hasLikelyUnplayableContainerHint(a.stream));
+      const bContainer = Number(hasLikelyUnplayableContainerHint(b.stream));
+      if (aContainer !== bContainer) return aContainer - bContainer;
       if (prefs.preferredResolution !== "any") {
         const aMatch = Number(detectResolution(a.stream) !== prefs.preferredResolution);
         const bMatch = Number(detectResolution(b.stream) !== prefs.preferredResolution);
@@ -147,6 +157,8 @@ interface ResolveResponse {
   ok: boolean;
   playableUrl?: string;
   filename?: string;
+  /** True when resolve-stream routed this through stream-proxy's ffmpeg remux — the filename/title-based warning banners below describe a problem that's already been fixed server-side when this is true, so they're suppressed. */
+  remuxed?: boolean;
   message?: string;
   /** false when this failure is connection-level (never reached the debrid provider at all) rather than specific to this source — every other source hits the same host and would fail identically, so the caller stops instead of grinding through the rest of the list. */
   retryable?: boolean;
@@ -216,6 +228,12 @@ export function PlaybackControls({
   // warning below be reliable instead of a heuristic, since this is the
   // exact file about to be handed to <video>.
   const [playingFilename, setPlayingFilename] = useState<string | null>(null);
+  // True when resolve-stream remuxed this source server-side — the
+  // filename-based container warning and title-based audio warning below
+  // both describe a problem that's already been fixed when this is true,
+  // so both get suppressed rather than showing a scary banner for
+  // something that's actually working now.
+  const [playingRemuxed, setPlayingRemuxed] = useState(false);
   // Set by Player once it confirms real playback started with zero
   // decoded audio tracks — see Player.tsx's onNoAudioTrackDetected doc
   // comment. Catches releases with no audio-codec hint in the title at
@@ -277,6 +295,7 @@ export function PlaybackControls({
             setPlayerSource({ url: result.playableUrl, format: "native" });
             setPlayingIndex(index);
             setPlayingFilename(result.filename ?? null);
+            setPlayingRemuxed(result.remuxed ?? false);
             setNoAudioTrackDetected(false);
             setResolvingIndex(null);
             return;
@@ -426,7 +445,7 @@ export function PlaybackControls({
       {playerSource && (
         <div className={styles.playerOverlay}>
           <div className={styles.playerFrame}>
-            {playingFilename && isLikelyUnplayableContainer(playingFilename) && (
+            {!playingRemuxed && playingFilename && isLikelyUnplayableContainer(playingFilename) && (
               <p className={styles.audioWarningBanner} role="status">
                 Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV (or similar)
                 container — resolving worked and the file is real, but browsers can&rsquo;t play that container
@@ -442,11 +461,11 @@ export function PlaybackControls({
                 instead), or open Skybox in Chrome, Edge, or Safari, which can usually play HEVC.
               </p>
             )}
-            {playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!) && (
+            {playingRemuxed && (
               <p className={styles.audioWarningBanner} role="status">
-                This release&rsquo;s audio format (DTS/AC3/TrueHD/Atmos) isn&rsquo;t natively browser-playable, so
-                it&rsquo;s being converted automatically — audio may lag a few seconds behind, and the scrub bar
-                won&rsquo;t seek correctly on this source.
+                This source needed automatic conversion to play in this browser (an incompatible audio format,
+                container, or both) — it&rsquo;s being fixed on the fly. May take a moment longer to start, and the
+                scrub bar won&rsquo;t seek correctly on this source.
               </p>
             )}
             {noAudioTrackDetected && (

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { HttpError } from "@skybox/core/shared";
-import { hasLikelyIncompatibleAudio } from "@skybox/core/addon-client";
+import { hasLikelyIncompatibleAudio, isLikelyUnplayableContainer } from "@skybox/core/addon-client";
 import {
   isDebridConnected,
   resolveDebridSource,
@@ -62,6 +62,8 @@ interface ResolveSuccess {
   ok: true;
   playableUrl: string;
   filename: string;
+  /** True when this source is being routed through stream-proxy's ffmpeg remux — the client uses this to suppress the filename/title-based warning banners, which would otherwise describe a problem that's already been fixed server-side. */
+  remuxed: boolean;
 }
 
 /**
@@ -77,20 +79,21 @@ interface ResolveSuccess {
  * that regardless of the exact mechanism — same idea as the IPTV mixed-
  * content proxy, applied here for a different reason.
  *
- * `remuxAudio` tells the proxy to run this through ffmpeg (video stream-
- * copied untouched, audio re-encoded to AAC) instead of a plain
- * passthrough — decided here, not client-side, since this is the one
- * place that actually has the release's title/name to run
- * hasLikelyIncompatibleAudio against. Real feature request: "make
- * everything compatible" for DTS/AC3/TrueHD/Atmos releases — full video
- * transcoding (the HEVC side of the same complaint) isn't realistic on
- * this app's GPU-less VPS deployment, but audio-only remux is cheap and
- * genuinely real-time even on modest hardware, so it's the part that's
- * actually achievable.
+ * `remux` tells the proxy to run this through ffmpeg (video stream-copied
+ * untouched, audio re-encoded to AAC, output always MP4 regardless of
+ * the input container) instead of a plain passthrough — decided here,
+ * not client-side, since this is the one place with both the release's
+ * title/name (for the audio-codec heuristic) AND the REAL resolved
+ * filename (for a reliable container check, unlike the pre-resolve title
+ * heuristic used for ranking elsewhere). Real feature request: "make
+ * everything compatible" — full video transcoding (the HEVC side of the
+ * same complaint) isn't realistic on this app's GPU-less VPS deployment,
+ * but this audio-only remux happens to fix MKV/AVI/etc containers too as
+ * a side effect of ffmpeg always outputting MP4, at no extra cost.
  */
-function proxiedVideoUrl(rawUrl: string, remuxAudio: boolean): string {
+function proxiedVideoUrl(rawUrl: string, remux: boolean): string {
   const params = new URLSearchParams({ url: rawUrl });
-  if (remuxAudio) params.set("remuxAudio", "1");
+  if (remux) params.set("remuxAudio", "1");
   return `/api/stream-proxy?${params.toString()}`;
 }
 
@@ -145,7 +148,11 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       { status: 400 },
     );
   }
-  const remuxAudio = hasLikelyIncompatibleAudio({ title, name });
+  // The title/name heuristic catches an incompatible audio codec, which a
+  // filename alone can't tell us; the REAL resolved filename (checked per
+  // return path below, once known) catches an unplayable container more
+  // reliably than guessing from the title text ever could.
+  const titleSuggestsIncompatibleAudio = hasLikelyIncompatibleAudio({ title, name });
 
   if (!(await isDebridConnected())) {
     // Not source-specific — every other source hits this exact same check.
@@ -167,10 +174,12 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       console.log(
         `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
       );
+      const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(result.filename);
       return NextResponse.json({
         ok: true,
-        playableUrl: proxiedVideoUrl(result.playableUrl, remuxAudio),
+        playableUrl: proxiedVideoUrl(result.playableUrl, remux),
         filename: result.filename,
+        remuxed: remux,
       });
     }
 
@@ -186,17 +195,22 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     }
 
     if (unrestricted) {
+      const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(unrestricted.filename);
       return NextResponse.json({
         ok: true,
-        playableUrl: proxiedVideoUrl(unrestricted.playableUrl, remuxAudio),
+        playableUrl: proxiedVideoUrl(unrestricted.playableUrl, remux),
         filename: unrestricted.filename,
+        remuxed: remux,
       });
     }
 
+    const fallbackFilename = url!.split("/").pop() || "stream";
+    const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(fallbackFilename);
     return NextResponse.json({
       ok: true,
-      playableUrl: proxiedVideoUrl(url!, remuxAudio),
-      filename: url!.split("/").pop() || "stream",
+      playableUrl: proxiedVideoUrl(url!, remux),
+      filename: fallbackFilename,
+      remuxed: remux,
     });
   } catch (error) {
     console.error("[resolve-stream] failed:", error);

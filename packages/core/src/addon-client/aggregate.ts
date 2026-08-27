@@ -42,6 +42,27 @@ export function isLikelyUnplayableContainer(filename: string): boolean {
 }
 
 /**
+ * Same container extensions as above, but as a pre-resolve heuristic
+ * against the release title/name text rather than the real resolved
+ * filename — many Stremio stream titles are literally (or end with) the
+ * actual torrent filename, extension included. Used only as a ranking
+ * signal (prefer a source that looks natively container-compatible from
+ * the start): unlike HEVC, an MKV/AVI/etc container is fixable —
+ * stream-proxy's remux path outputs MP4 regardless of the input
+ * container — so this is a "nicer to have, avoids an ffmpeg round-trip"
+ * preference, never a reason to hide a source outright.
+ */
+const LIKELY_UNPLAYABLE_CONTAINER_PATTERN = new RegExp(
+  `\\.(?:${Array.from(UNPLAYABLE_CONTAINER_EXTENSIONS).join("|")})\\b`,
+  "i",
+);
+
+/** Exported so UI layers can rank/display using the exact same pre-resolve heuristic — see LIKELY_UNPLAYABLE_CONTAINER_PATTERN. */
+export function hasLikelyUnplayableContainerHint(stream: StremioStream): boolean {
+  return LIKELY_UNPLAYABLE_CONTAINER_PATTERN.test(streamText(stream));
+}
+
+/**
  * Release-title hints for HEVC/H.265 video. Unlike the audio codecs and
  * containers above, this isn't universally unplayable — Chrome, Edge, and
  * Safari all decode HEVC (via hardware or, in recent Chrome, software)

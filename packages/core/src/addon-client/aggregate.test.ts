@@ -4,6 +4,7 @@ import {
   hasLikelyIncompatibleAudio,
   hasLikelyHevcVideo,
   isLikelyUnplayableContainer,
+  hasLikelyUnplayableContainerHint,
   matchesPreferredLanguage,
 } from "./aggregate.js";
 import type { AddonRef, StremioManifest, StremioStream } from "../shared/types.js";
@@ -262,6 +263,24 @@ describe("isLikelyUnplayableContainer", () => {
   it("is case-insensitive and handles a bare/missing extension safely", () => {
     expect(isLikelyUnplayableContainer("Movie.2024.MKV")).toBe(true);
     expect(isLikelyUnplayableContainer("no-extension-at-all")).toBe(false);
+  });
+});
+
+describe("hasLikelyUnplayableContainerHint", () => {
+  it.each([
+    "Movie.2024.1080p.WEB-DL.x264-GROUP.mkv",
+    "Movie.2024.720p.avi",
+    "Movie.2024.1080p.x264-GROUP.mkv\n👤 40 💾 8 GB",
+  ])("flags %s", (title) => {
+    expect(hasLikelyUnplayableContainerHint({ title } as StremioStream)).toBe(true);
+  });
+
+  it.each([
+    "Movie.2024.1080p.WEB-DL.x264-GROUP.mp4",
+    "Movie.2024.720p.WEBRip.x264-GROUP",
+    "Movie.2024.1080p.x264-GROUP.mp4\n👤 40 💾 8 GB",
+  ])("does not flag %s", (title) => {
+    expect(hasLikelyUnplayableContainerHint({ title } as StremioStream)).toBe(false);
   });
 });
 
