@@ -60,6 +60,29 @@ interface ResolveSuccess {
   filename: string;
 }
 
+/**
+ * For logging only — never the real URL verbatim. Debrid-resolved URLs
+ * routinely carry an account token/API key as a query param (TorBox's
+ * requestdl does exactly this), so logging it unredacted would leak a
+ * live credential into server logs. Keeping the host/path/param *names*
+ * is still enough to actually diagnose "what did we hand the browser"
+ * (right shape of URL? right host? redirect param present or not?)
+ * without exposing the secret itself.
+ */
+function redactedUrlForLogging(rawUrl: string): string {
+  try {
+    const url = new URL(rawUrl);
+    const params = new URLSearchParams(url.search);
+    for (const key of params.keys()) {
+      if (/token|key|auth/i.test(key)) params.set(key, "[redacted]");
+    }
+    url.search = params.toString();
+    return url.toString();
+  } catch {
+    return "[unparseable url]";
+  }
+}
+
 interface ResolveFailure {
   ok: false;
   message: string;
@@ -106,6 +129,9 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
           { status: 502 },
         );
       }
+      console.log(
+        `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
+      );
       return NextResponse.json({ ok: true, playableUrl: result.playableUrl, filename: result.filename });
     }
 
