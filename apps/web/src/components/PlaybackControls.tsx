@@ -373,6 +373,28 @@ const RESOLVE_POOL_CONCURRENCY = 2;
  */
 const NEAR_END_THRESHOLD_SEC = 180;
 
+/**
+ * Real regression report right after shipping the "Testing sources…"
+ * screen: sources would resolve fine but playback would just never start
+ * — "I can never get a show to start playing... anything." Root cause:
+ * hiding the player until onPlaybackReady (the native `playing` event)
+ * fires assumed that event always eventually happens for a loaded video,
+ * but browsers commonly block autoplay-WITH-SOUND under conditions that
+ * DON'T throw a catchable error and DON'T fire `playing` either — the
+ * video just sits loaded, paused, and silent, forever, waiting for a
+ * manual click <video>'s own onClick={togglePlay} already supports. That
+ * click was previously always reachable (the player was visible even
+ * while paused); hiding it behind an opaque loading screen turned an
+ * existing "click to start" fallback into a dead end with no way to
+ * even discover it. This is a deliberate fail-OPEN safety net, not a fix
+ * for a specific bug: if onPlaybackReady hasn't fired this long after a
+ * source resolved, reveal the real player anyway — worst case a viewer
+ * sees a paused frame and clicks it themselves, exactly like before this
+ * feature existed; best case this rarely fires at all, since a genuinely
+ * working, unblocked source confirms within a second or two.
+ */
+const SOURCE_READY_FALLBACK_MS = 6_000;
+
 async function resolveStream(stream: StremioStream, signal: AbortSignal): Promise<ResolveResponse> {
   const res = await fetch("/api/resolve-stream", {
     method: "POST",
@@ -627,6 +649,18 @@ export function PlaybackControls({
       prefetchAbortRef.current?.abort();
     };
   }, []);
+
+  // See SOURCE_READY_FALLBACK_MS's doc comment — reveals the real player
+  // even without onPlaybackReady confirming, so a viewer is never stuck
+  // behind an opaque "Testing sources…" screen with no way to reach the
+  // native play control underneath. Cleared/re-armed whenever playerSource
+  // or sourceReady changes, so a source that DOES confirm quickly never
+  // triggers this at all.
+  useEffect(() => {
+    if (!playerSource || sourceReady) return;
+    const timer = setTimeout(() => setSourceReady(true), SOURCE_READY_FALLBACK_MS);
+    return () => clearTimeout(timer);
+  }, [playerSource, sourceReady]);
 
   const handleSourceFailed = useCallback(() => {
     setPlayerSource(null);
