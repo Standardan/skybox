@@ -12,6 +12,7 @@ import { TopNav } from "@/components/TopNav";
 import { TitleHero } from "@/components/TitleHero";
 import { EpisodePicker } from "@/components/EpisodePicker";
 import { PlaybackControls } from "@/components/PlaybackControls";
+import { WatchlistToggle } from "@/components/WatchlistToggle";
 import styles from "./title.module.css";
 
 // Real, live Cinemeta/addon/debrid-connection data — never statically
@@ -122,22 +123,29 @@ export default async function TitlePage({
           meta={metaLine || undefined}
           synopsis={meta.description}
           actions={
-            <PlaybackControls
-              streams={streams}
-              hasAddons={streamAddons.length > 0}
-              title={playerTitle}
-              poster={meta.poster}
-              metaId={id}
-              mediaType={type as MediaType}
-              videoId={currentVideoId}
-              playbackPrefs={config.playback}
-              resumePositionSec={resumePositionSec}
-              expectedRuntimeMinutes={expectedRuntimeMinutes}
-              lastWorkingSource={libraryItem?.lastWorkingSource}
-              nextVideoId={nextEpisode?.id}
-              nextEpisodeLabel={nextEpisode?.title || (nextEpisode ? `Episode ${nextEpisode.episode ?? ""}` : undefined)}
-              autoPlayOnMount={autoplay === "1"}
-            />
+            <>
+              <PlaybackControls
+                streams={streams}
+                hasAddons={streamAddons.length > 0}
+                title={playerTitle}
+                poster={meta.poster}
+                metaId={id}
+                mediaType={type as MediaType}
+                videoId={currentVideoId}
+                playbackPrefs={config.playback}
+                resumePositionSec={resumePositionSec}
+                expectedRuntimeMinutes={expectedRuntimeMinutes}
+                lastWorkingSource={libraryItem?.lastWorkingSource}
+                nextVideoId={nextEpisode?.id}
+                nextEpisodeLabel={nextEpisode?.title || (nextEpisode ? `Episode ${nextEpisode.episode ?? ""}` : undefined)}
+                autoPlayOnMount={autoplay === "1"}
+              />
+              <WatchlistToggle
+                metaId={id}
+                type={type as MediaType}
+                initialOnWatchlist={libraryItem?.state === "watchlist"}
+              />
+            </>
           }
         />
         {isSeries && (

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getContinueWatching } from "@skybox/core/library";
+import { getContinueWatching, getWatchlist } from "@skybox/core/library";
 import type { AddonRef, Game } from "@skybox/core/shared";
 import { formatClockTime } from "@skybox/core/shared";
 import { TopNav } from "@/components/TopNav";
@@ -7,8 +7,10 @@ import { TimezoneAutoDetect } from "@/components/TimezoneAutoDetect";
 import { Rail } from "@/components/Rail";
 import { MediaCard, type MediaCardGame } from "@/components/MediaCard";
 import { PosterCardLink } from "@/components/PosterCardLink";
-import { getCinemetaAddon, getCachedCatalog, getCachedMeta } from "@/lib/addon-server";
+import { ContinueWatchingRail } from "@/components/ContinueWatchingRail";
+import { getCinemetaAddon, getCachedCatalog } from "@/lib/addon-server";
 import { cinemetaPosterUrl } from "@/lib/cinemeta";
+import { resolveLibraryCards, type LibraryCard } from "@/lib/library-cards";
 import { getTodaysMatchedGames } from "@/lib/sports-server";
 import { getIptvSnapshot } from "@/lib/iptv-server";
 import { readConfig } from "@/lib/config-store";
@@ -60,48 +62,19 @@ function toCardGame(
 const HOME_GAMES_LIMIT = 8;
 const HOME_RAIL_LIMIT = 12;
 const CONTINUE_WATCHING_LIMIT = 12;
+const WATCHLIST_RAIL_LIMIT = 12;
 
-interface ContinueWatchingCard {
-  id: string;
-  title: string;
-  posterUrl: string;
-  progress: number;
-  href: string;
+async function loadContinueWatching(cinemeta: AddonRef, userId: string): Promise<LibraryCard[]> {
+  const library = await readLibrary(userId);
+  const items = getContinueWatching(library, CONTINUE_WATCHING_LIMIT);
+  return resolveLibraryCards(cinemeta, items);
 }
 
-/**
- * `LibraryItem` only stores ids/progress (packages/core/library is
- * metadata-agnostic on purpose), so each in-progress item needs a real
- * Cinemeta lookup for its name/poster. Movie/series only — a "channel" type
- * would mean live TV, which has no meaningful "continue watching" concept.
- */
-async function loadContinueWatching(cinemeta: AddonRef, userId: string): Promise<ContinueWatchingCard[]> {
+/** My List (B9). */
+async function loadWatchlist(cinemeta: AddonRef, userId: string): Promise<LibraryCard[]> {
   const library = await readLibrary(userId);
-  const items = getContinueWatching(library, CONTINUE_WATCHING_LIMIT).filter(
-    (item) => item.type === "movie" || item.type === "series",
-  );
-
-  const cards = await Promise.all(
-    items.map(async (item): Promise<ContinueWatchingCard | null> => {
-      if (!item.progress) return null;
-      try {
-        const meta = await getCachedMeta(cinemeta, item.type, item.metaId);
-        const resumeVideo = item.progress.videoId !== item.metaId ? `?video=${item.progress.videoId}` : "";
-        return {
-          id: item.metaId,
-          title: meta.name,
-          posterUrl: cinemetaPosterUrl(item.metaId),
-          progress: Math.min(1, Math.max(0, item.progress.positionSec / item.progress.durationSec)),
-          href: `/title/${item.type}/${item.metaId}${resumeVideo}`,
-        };
-      } catch {
-        // A title that's since disappeared from Cinemeta shouldn't break the rail.
-        return null;
-      }
-    }),
-  );
-
-  return cards.filter((card): card is ContinueWatchingCard => card !== null);
+  const items = getWatchlist(library).slice(0, WATCHLIST_RAIL_LIMIT);
+  return resolveLibraryCards(cinemeta, items);
 }
 
 export default async function HomePage() {
@@ -119,10 +92,11 @@ export default async function HomePage() {
       : Promise.resolve(null),
   ]);
 
-  const [popularMovies, popularSeries, continueWatching] = await Promise.all([
+  const [popularMovies, popularSeries, continueWatching, watchlist] = await Promise.all([
     getCachedCatalog(cinemeta, "movie", CATALOG_ID),
     getCachedCatalog(cinemeta, "series", CATALOG_ID),
     loadContinueWatching(cinemeta, user.id),
+    loadWatchlist(cinemeta, user.id),
   ]);
 
   // D8: sports off, no leagues followed, or nothing scheduled today — the
@@ -150,16 +124,12 @@ export default async function HomePage() {
           </Rail>
         )}
 
-        {continueWatching.length > 0 && (
-          <Rail title="Continue Watching">
-            {continueWatching.map((item) => (
-              <PosterCardLink
-                key={item.id}
-                href={item.href}
-                title={item.title}
-                posterUrl={item.posterUrl}
-                progress={item.progress}
-              />
+        {continueWatching.length > 0 && <ContinueWatchingRail items={continueWatching} />}
+
+        {watchlist.length > 0 && (
+          <Rail title="My List">
+            {watchlist.map((item) => (
+              <PosterCardLink key={item.id} href={item.href} title={item.title} posterUrl={item.posterUrl} />
             ))}
           </Rail>
         )}

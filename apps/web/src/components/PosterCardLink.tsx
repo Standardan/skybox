@@ -22,16 +22,26 @@ export function PosterCardLink({
   title,
   posterUrl,
   progress,
+  onDismiss,
+  dismissLabel,
 }: {
   href: string;
   title: string;
   posterUrl: string;
   progress?: number;
+  onDismiss?: () => void;
+  dismissLabel?: string;
 }) {
   const router = useRouter();
   return (
     <div onClick={() => router.push(href)}>
-      <PosterCard title={title} posterUrl={posterUrl} progress={progress} />
+      <PosterCard
+        title={title}
+        posterUrl={posterUrl}
+        progress={progress}
+        onDismiss={onDismiss}
+        dismissLabel={dismissLabel}
+      />
     </div>
   );
 }

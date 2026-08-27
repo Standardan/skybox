@@ -11,6 +11,8 @@ const LINKS = [
   { label: "Sports", href: "/sports" },
   { label: "Movies", href: "/movies" },
   { label: "Series", href: "/series" },
+  { label: "My List", href: "/watchlist" },
+  { label: "History", href: "/history" },
 ];
 
 /**

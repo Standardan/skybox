@@ -1,12 +1,47 @@
 .card {
+  position: relative;
+  flex: 0 0 auto;
+  width: 160px;
+  border-radius: var(--radius-sm);
+}
+
+.selectButton {
   appearance: none;
   border: none;
   padding: 0;
   background: none;
   cursor: pointer;
-  flex: 0 0 auto;
-  width: 160px;
+  display: block;
+  width: 100%;
   border-radius: var(--radius-sm);
+}
+
+.dismissButton {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-pill);
+  background: rgb(0 0 0 / 0.55);
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  line-height: 1;
+  opacity: 0;
+  transition: opacity var(--duration-hover) linear, background var(--duration-hover) linear;
+}
+
+.card:hover .dismissButton,
+.card:focus-within .dismissButton {
+  opacity: 1;
+}
+
+.dismissButton:hover {
+  background: rgb(0 0 0 / 0.8);
 }
 
 .art {
@@ -30,8 +65,8 @@
   transition: opacity var(--duration-hover) linear;
 }
 
-.card:hover .scrim,
-.card:focus-visible .scrim {
+.selectButton:hover .scrim,
+.selectButton:focus-visible .scrim {
   opacity: 1;
 }
 
@@ -52,8 +87,8 @@
     transform var(--duration-hover) var(--ease-signature);
 }
 
-.card:hover .title,
-.card:focus-visible .title {
+.selectButton:hover .title,
+.selectButton:focus-visible .title {
   opacity: 1;
   transform: translateY(0);
 }
