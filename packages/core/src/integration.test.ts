@@ -125,7 +125,7 @@ describe("integration: sports schedule -> IPTV channel match", () => {
     );
 
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    const games = await adapter.getSchedule(new Date(startTime));
+    const games = await adapter.getSchedule(new Date(startTime), "UTC");
     expect(games).toHaveLength(1);
     const game = games[0]!;
     expect(game.broadcastNetworks).toEqual(["ESPN"]);

@@ -369,7 +369,8 @@ export interface ChannelMatch {
 /** Per-league schedule source (ARCH-R5: isolate behind adapters). */
 export interface SportsAdapter {
   readonly league: string;
-  getSchedule(date: Date): Promise<Game[]>;
+  /** `timezone` decides which calendar day `date` falls on — see EspnAdapter's formatDate for why this can't just use the server's own local time. */
+  getSchedule(date: Date, timezone: string): Promise<Game[]>;
 }
 
 // ---------------------------------------------------------------------------

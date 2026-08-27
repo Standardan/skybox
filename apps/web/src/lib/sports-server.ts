@@ -51,12 +51,18 @@ const GAMES_CACHE_TTL_MS = 60 * 1000;
 let gamesCache: { games: Game[]; fetchedAt: number } | null = null;
 let gamesInFlight: Promise<Game[]> | null = null;
 
-async function getAllTodaysGames(): Promise<Game[]> {
+/**
+ * `timezone` isn't part of the cache key — it's a single household-level
+ * setting (config.ui.timezone), not per-request, so a change to it just
+ * takes up to GAMES_CACHE_TTL_MS to be reflected, same as any other
+ * config change this cache doesn't explicitly key on.
+ */
+async function getAllTodaysGames(timezone: string): Promise<Game[]> {
   if (gamesCache && Date.now() - gamesCache.fetchedAt < GAMES_CACHE_TTL_MS) return gamesCache.games;
   if (gamesInFlight) return gamesInFlight;
 
   const adapters = getFollowedLeagueAdapters();
-  gamesInFlight = getTodaysGames(adapters, adapters.map((a) => a.league))
+  gamesInFlight = getTodaysGames(adapters, adapters.map((a) => a.league), timezone)
     .then((games) => {
       gamesCache = { games, fetchedAt: Date.now() };
       return games;
@@ -154,7 +160,7 @@ export async function getTodaysMatchedGames(): Promise<Game[]> {
   if (!config.sports.enabled) return [];
   if (config.sports.leagues.length === 0 && config.sports.teams.length === 0) return [];
 
-  const games = await getAllTodaysGames();
+  const games = await getAllTodaysGames(config.ui.timezone);
   if (games.length === 0) return [];
 
   const { channels, epgStore } = await getIptvSnapshot();

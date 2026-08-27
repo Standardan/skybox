@@ -73,7 +73,7 @@ describe("EspnAdapter", () => {
 
   it("requests the correct ESPN scoreboard URL for the given league and date", async () => {
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    await adapter.getSchedule(new Date(2026, 8, 10)); // Sept 10 2026
+    await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC"); // Sept 10 2026
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
@@ -84,7 +84,7 @@ describe("EspnAdapter", () => {
 
   it("maps ESPN status.type.state to GameStatus (pre/in/post)", async () => {
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    const games = await adapter.getSchedule(new Date(2026, 8, 10));
+    const games = await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC");
 
     expect(games).toHaveLength(3);
     expect(games[0]?.status).toBe("upcoming");
@@ -94,7 +94,7 @@ describe("EspnAdapter", () => {
 
   it("parses home/away teams, ids, league and startTime", async () => {
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    const games = await adapter.getSchedule(new Date(2026, 8, 10));
+    const games = await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC");
     const game = games[0];
     expect(game).toBeDefined();
 
@@ -108,7 +108,7 @@ describe("EspnAdapter", () => {
 
   it("extracts and dedupes broadcastNetworks from competitions[].broadcasts[].names[]", async () => {
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    const games = await adapter.getSchedule(new Date(2026, 8, 10));
+    const games = await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC");
 
     expect(games[1]?.broadcastNetworks).toEqual(["FOX"]); // deduped
     expect(games[2]?.broadcastNetworks).toEqual(["NBC", "Peacock"]);
@@ -116,7 +116,7 @@ describe("EspnAdapter", () => {
 
   it("extracts score only when status is live or final, not upcoming", async () => {
     const adapter = new EspnAdapter("nfl", "football", "nfl");
-    const games = await adapter.getSchedule(new Date(2026, 8, 10));
+    const games = await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC");
 
     expect(games[0]?.score).toBeUndefined(); // pre/upcoming
     expect(games[1]?.score).toEqual({ home: 17, away: 14 }); // in/live
@@ -152,7 +152,38 @@ describe("EspnAdapter", () => {
     );
 
     const adapter = new EspnAdapter("nba", "basketball", "nba");
-    const games = await adapter.getSchedule(new Date(2026, 8, 10));
+    const games = await adapter.getSchedule(new Date(Date.UTC(2026, 8, 10)), "UTC");
     expect(games[0]?.status).toBe("upcoming");
+  });
+
+  /**
+   * Real bug: "Today's Games" showing tomorrow's games — formatDate used
+   * to read the SERVER's own local calendar day (via Date.getFullYear/
+   * getMonth/getDate), not the viewer's configured timezone. A VPS
+   * running in UTC is already into "tomorrow" in the evening US hours,
+   * so the ESPN query used the wrong date entirely. This instant
+   * (2026-09-11T02:00Z) is deliberately chosen to fall on DIFFERENT
+   * calendar days in UTC vs. US Eastern — the only way to actually prove
+   * the timezone argument changes which date gets queried, not just that
+   * it's accepted.
+   */
+  it("queries the calendar day for the GIVEN timezone, not UTC or the server's own local time", async () => {
+    const instant = new Date("2026-09-11T02:00:00Z"); // 2026-09-10T22:00 in America/New_York (EDT, UTC-4)
+
+    const adapter = new EspnAdapter("nfl", "football", "nfl");
+    await adapter.getSchedule(instant, "America/New_York");
+
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toContain("dates=20260910"); // still "today" in New York
+  });
+
+  it("the same instant queries a different date for a different timezone", async () => {
+    const instant = new Date("2026-09-11T02:00:00Z");
+
+    const adapter = new EspnAdapter("nfl", "football", "nfl");
+    await adapter.getSchedule(instant, "UTC");
+
+    const [url] = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
+    expect(url).toContain("dates=20260911"); // already "tomorrow" in UTC
   });
 });

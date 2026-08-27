@@ -67,11 +67,22 @@ function dedupe(values: string[]): string[] {
   return Array.from(new Set(values));
 }
 
-function formatDate(date: Date): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, "0");
-  const d = String(date.getDate()).padStart(2, "0");
-  return `${y}${m}${d}`;
+/**
+ * Real bug this fixes: used `date.getFullYear()/getMonth()/getDate()` —
+ * the SERVER's own local calendar day, not the viewer's. On a VPS running
+ * in UTC, once it's evening in the US the server is already into
+ * tomorrow in UTC, so "Today's Games" was querying ESPN for tomorrow's
+ * slate while it was still today for the viewer. `timezone` (UiPrefs.
+ * timezone) fixes the calendar day the same way format-time.ts's
+ * formatters fix displayed clock times — explicit IANA zone via Intl,
+ * not whatever zone the process happens to be running in. `en-CA`
+ * specifically formats as YYYY-MM-DD by default, which is convenient to
+ * strip dashes from rather than picking parts back out of formatToParts.
+ */
+function formatDate(date: Date, timezone: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" })
+    .format(date)
+    .replace(/-/g, "");
 }
 
 function toScore(raw: string | undefined): number | undefined {
@@ -92,8 +103,8 @@ export class EspnAdapter implements SportsAdapter {
     private readonly espnLeague: string,
   ) {}
 
-  async getSchedule(date: Date): Promise<Game[]> {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/${this.espnSport}/${this.espnLeague}/scoreboard?dates=${formatDate(date)}`;
+  async getSchedule(date: Date, timezone: string): Promise<Game[]> {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/${this.espnSport}/${this.espnLeague}/scoreboard?dates=${formatDate(date, timezone)}`;
     const response = await fetchJson<EspnScoreboardResponse>(url);
     return (response.events ?? []).map((event) => this.toGame(event));
   }
