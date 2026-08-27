@@ -90,7 +90,17 @@ export async function GET(request: Request) {
   }
 
   if (requestUrl.searchParams.get("remuxAudio") === "1") {
-    return remuxAudioStream(target, request.signal);
+    const remuxed = await tryRemuxAudioStream(target, request.signal);
+    if (remuxed) return remuxed;
+    // Real regression this guards against: sources that used to at least
+    // play silently (audio-incompatible, pre-remux) were, for some
+    // sources in production, timing out on the ffmpeg leg entirely and
+    // ending up WORSE than before — a dead ~15s hang instead of silent
+    // playback. Falling through to the exact same plain passthrough below
+    // means a broken/slow/unreachable remux can never leave a source worse
+    // off than it was before this feature existed — worst case, silent
+    // audio again, never a hang.
+    console.warn(`[stream-proxy] remux failed or timed out for ${target.hostname} — falling back to direct passthrough`);
   }
 
   const upstreamRequestHeaders: Record<string, string> = {};
@@ -129,6 +139,15 @@ export async function GET(request: Request) {
 }
 
 const FFMPEG_STDERR_TAIL_BYTES = 4000;
+// Bounds how long we'll wait for ffmpeg to actually produce output before
+// giving up and falling back to a plain passthrough. Real regression this
+// exists to prevent: without this, a slow/unreachable/stalled ffmpeg leg
+// (network trouble reaching the debrid CDN, or anything else that makes
+// ffmpeg hang rather than exit) meant the request just sat there forever —
+// worse than the pre-remux behavior (silent but playing) it was supposed
+// to improve on. ffmpeg's own `-timeout` flag (below) guards the network
+// I/O specifically; this guards the whole startup regardless of cause.
+const REMUX_STARTUP_TIMEOUT_MS = 15_000;
 
 /**
  * Real-time audio-only remux: video is stream-copied untouched (`-c:v
@@ -156,9 +175,20 @@ const FFMPEG_STDERR_TAIL_BYTES = 4000;
  * entirely here. Playback works start to finish; scrubbing doesn't.
  * Properly fixing that means HLS segmenting with a real playlist, a
  * meaningfully bigger feature than this pass — noted, not attempted.
+ *
+ * Returns null (never throws, never hangs past REMUX_STARTUP_TIMEOUT_MS)
+ * on any failure to actually start producing output — the caller falls
+ * back to a plain passthrough in that case, so remux can only ever make
+ * things better, never worse, than serving the file unmodified.
  */
-function remuxAudioStream(target: URL, clientSignal: AbortSignal): Response {
+async function tryRemuxAudioStream(target: URL, clientSignal: AbortSignal): Promise<Response | null> {
   const args = [
+    // ffmpeg's own protocol-level I/O timeout (microseconds) — guards
+    // against a stalled read mid-stream, not just a slow start; the
+    // startup race below is the other half, for a connection that never
+    // gets anywhere at all.
+    "-timeout",
+    String(REMUX_STARTUP_TIMEOUT_MS * 1000),
     "-loglevel",
     "error",
     "-nostats",
@@ -197,18 +227,44 @@ function remuxAudioStream(target: URL, clientSignal: AbortSignal): Response {
       console.error(`[stream-proxy] ffmpeg exited ${code} remuxing ${target.hostname}`, stderrTail);
     }
   });
-  // Can't change the HTTP status by the time this fires (the Response
-  // below has already gone out with the process's stdout as its body) —
-  // logged so a missing/broken ffmpeg binary is at least diagnosable
-  // server-side instead of just an empty response with no explanation.
-  child.on("error", (error) => {
-    console.error(`[stream-proxy] failed to start ffmpeg for ${target.hostname}`, error);
-  });
   function killChild() {
     if (!child.killed) child.kill("SIGKILL");
   }
   clientSignal.addEventListener("abort", killChild, { once: true });
   child.once("exit", () => clientSignal.removeEventListener("abort", killChild));
+
+  // Waits for ffmpeg to have real output buffered (the 'readable' event —
+  // unlike 'data', this doesn't itself consume anything, so Readable.toWeb
+  // below still sees the stream from the very start) before committing to
+  // this Response at all. A missing/broken binary, a network stall
+  // reaching the debrid CDN, or anything else that keeps ffmpeg from ever
+  // producing output all land here the same way: no output within the
+  // timeout, kill it, return null, let the caller fall back.
+  const ready = await new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), REMUX_STARTUP_TIMEOUT_MS);
+    child.stdout.once("readable", () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      console.error(`[stream-proxy] failed to start ffmpeg for ${target.hostname}`, error);
+      resolve(false);
+    });
+    // Fires on ANY exit, any code — including 0 with zero bytes ever
+    // written (e.g. a genuinely empty/zero-duration input). If 'readable'
+    // above already fired first, the promise has already settled and this
+    // resolve() is a harmless no-op (a promise settles only once).
+    child.once("exit", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+
+  if (!ready) {
+    killChild();
+    return null;
+  }
 
   const headers = new Headers({ "Content-Type": "video/mp4", "Cache-Control": "no-store" });
   return new Response(Readable.toWeb(child.stdout) as unknown as ReadableStream, { status: 200, headers });
