@@ -905,9 +905,14 @@ export function PlaybackControls({
           <div className={styles.playerFrame}>
             {!playerSource && (
               // No candidate has resolved yet — nothing to mount/hide behind, just the screen itself.
+              // This is a fixed, full-screen overlay (see .playerOverlay), so the Play/Stop row above
+              // it is now covered and unreachable — this Cancel button is the only way out while it's up.
               <div className={styles.testingSourcesScreen} role="status">
                 <div className={styles.testingSourcesSpinner} aria-hidden="true" />
                 <p>Testing sources…</p>
+                <button type="button" className={styles.secondary} onClick={stopResolving}>
+                  Cancel
+                </button>
               </div>
             )}
             {sourceReady && (
@@ -976,6 +981,9 @@ export function PlaybackControls({
                   <div className={styles.testingSourcesOverlay} role="status">
                     <div className={styles.testingSourcesSpinner} aria-hidden="true" />
                     <p>Testing sources…</p>
+                    <button type="button" className={styles.secondary} onClick={stopResolving}>
+                      Cancel
+                    </button>
                   </div>
                 )}
                 <Player
