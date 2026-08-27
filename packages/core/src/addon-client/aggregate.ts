@@ -134,6 +134,22 @@ function detectStreamLanguages(stream: StremioStream): { codes: string[]; multi:
 }
 
 /**
+ * Real report: a release tagged both 🇬🇧 and 🇷🇺 (English AND Russian
+ * audio both present) played in Russian despite an English preference —
+ * containing the preferred language isn't the same as it being the
+ * DEFAULT track a plain <video> (or a naive first-audio-stream remux)
+ * actually plays. Exported so resolve-stream can decide whether it's
+ * worth probing the real file for per-track language metadata and
+ * selecting the right one explicitly (see stream-proxy.ts) — only
+ * meaningful when there's more than one language to begin with,
+ * multi/dual-audio tagged or two-plus distinct languages detected.
+ */
+export function hasMultipleLanguageTracksHint(stream: StremioStream): boolean {
+  const { codes, multi } = detectStreamLanguages(stream);
+  return multi || codes.length >= 2;
+}
+
+/**
  * Whether a stream matches a user's preferred language (Settings ->
  * Playback). A release with no language explicitly mentioned defaults to
  * matching only "en": these release ecosystems only bother tagging

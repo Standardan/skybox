@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { HttpError } from "@skybox/core/shared";
-import { hasLikelyIncompatibleAudio, isLikelyUnplayableContainer } from "@skybox/core/addon-client";
+import {
+  hasLikelyIncompatibleAudio,
+  hasMultipleLanguageTracksHint,
+  isLikelyUnplayableContainer,
+} from "@skybox/core/addon-client";
 import {
   isDebridConnected,
   resolveDebridSource,
   unrestrictDebridLink,
 } from "@/lib/debrid-server";
+import { readConfig } from "@/lib/config-store";
 
 /**
  * Status codes that genuinely mean "something's wrong with THIS release" —
@@ -90,10 +95,19 @@ interface ResolveSuccess {
  * same complaint) isn't realistic on this app's GPU-less VPS deployment,
  * but this audio-only remux happens to fix MKV/AVI/etc containers too as
  * a side effect of ffmpeg always outputting MP4, at no extra cost.
+ *
+ * `preferredAudioLang`, when set, additionally tells the proxy to probe
+ * the file's real per-track language metadata and select that specific
+ * audio stream — see stream-proxy.ts's findPreferredAudioStreamIndex.
+ * Real report: a release tagged with two languages (English AND Russian
+ * audio both present) played in Russian despite an English preference —
+ * a release just CONTAINING the preferred language doesn't mean it's
+ * the file's default (first) track.
  */
-function proxiedVideoUrl(rawUrl: string, remux: boolean): string {
+function proxiedVideoUrl(rawUrl: string, remux: boolean, preferredAudioLang?: string): string {
   const params = new URLSearchParams({ url: rawUrl });
   if (remux) params.set("remuxAudio", "1");
+  if (preferredAudioLang) params.set("preferredAudioLang", preferredAudioLang);
   return `/api/stream-proxy?${params.toString()}`;
 }
 
@@ -153,6 +167,14 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
   // return path below, once known) catches an unplayable container more
   // reliably than guessing from the title text ever could.
   const titleSuggestsIncompatibleAudio = hasLikelyIncompatibleAudio({ title, name });
+  // Only worth probing/selecting a specific audio track when there's
+  // actually more than one language to choose between AND the user
+  // asked for a specific one — the common single-language case never
+  // touches this at all.
+  const config = await readConfig();
+  const preferredLanguage = config.playback.preferredLanguage;
+  const preferredAudioLang =
+    preferredLanguage !== "any" && hasMultipleLanguageTracksHint({ title, name }) ? preferredLanguage : undefined;
 
   if (!(await isDebridConnected())) {
     // Not source-specific — every other source hits this exact same check.
@@ -174,10 +196,11 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       console.log(
         `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
       );
-      const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(result.filename);
+      const remux =
+        titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(result.filename) || Boolean(preferredAudioLang);
       return NextResponse.json({
         ok: true,
-        playableUrl: proxiedVideoUrl(result.playableUrl, remux),
+        playableUrl: proxiedVideoUrl(result.playableUrl, remux, preferredAudioLang),
         filename: result.filename,
         remuxed: remux,
       });
@@ -195,20 +218,24 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     }
 
     if (unrestricted) {
-      const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(unrestricted.filename);
+      const remux =
+        titleSuggestsIncompatibleAudio ||
+        isLikelyUnplayableContainer(unrestricted.filename) ||
+        Boolean(preferredAudioLang);
       return NextResponse.json({
         ok: true,
-        playableUrl: proxiedVideoUrl(unrestricted.playableUrl, remux),
+        playableUrl: proxiedVideoUrl(unrestricted.playableUrl, remux, preferredAudioLang),
         filename: unrestricted.filename,
         remuxed: remux,
       });
     }
 
     const fallbackFilename = url!.split("/").pop() || "stream";
-    const remux = titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(fallbackFilename);
+    const remux =
+      titleSuggestsIncompatibleAudio || isLikelyUnplayableContainer(fallbackFilename) || Boolean(preferredAudioLang);
     return NextResponse.json({
       ok: true,
-      playableUrl: proxiedVideoUrl(url!, remux),
+      playableUrl: proxiedVideoUrl(url!, remux, preferredAudioLang),
       filename: fallbackFilename,
       remuxed: remux,
     });

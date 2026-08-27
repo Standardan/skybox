@@ -6,6 +6,7 @@ import {
   isLikelyUnplayableContainer,
   hasLikelyUnplayableContainerHint,
   matchesPreferredLanguage,
+  hasMultipleLanguageTracksHint,
 } from "./aggregate.js";
 import type { AddonRef, StremioManifest, StremioStream } from "../shared/types.js";
 
@@ -315,5 +316,26 @@ describe("matchesPreferredLanguage", () => {
   it("recognizes flag emoji and native-language spellings, not just English words", () => {
     expect(matchesPreferredLanguage({ title: "Pelicula.2024.Español.1080p" } as StremioStream, "es")).toBe(true);
     expect(matchesPreferredLanguage({ title: "Film.2024.1080p 🇩🇪" } as StremioStream, "de")).toBe(true);
+  });
+});
+
+describe("hasMultipleLanguageTracksHint", () => {
+  it("flags a release tagged with two distinct language flags", () => {
+    // Real report: this exact release played in Russian despite an
+    // English preference — containing both isn't the same as English
+    // being the default track.
+    const title = "Obsession (2025) UHD WEB-DL 2160p HDRezka Studio 🇬🇧 / 🇷🇺";
+    expect(hasMultipleLanguageTracksHint({ title } as StremioStream)).toBe(true);
+  });
+
+  it("flags an explicit MULTI/dual-audio tag even with no specific languages named", () => {
+    expect(hasMultipleLanguageTracksHint({ title: "Movie.2024.MULTI.1080p.BluRay" } as StremioStream)).toBe(true);
+  });
+
+  it("does not flag a single-language release", () => {
+    expect(hasMultipleLanguageTracksHint({ title: "Movie.2024.FRENCH.1080p.WEB-DL" } as StremioStream)).toBe(false);
+    expect(hasMultipleLanguageTracksHint({ title: "Movie.2024.1080p.WEB-DL.x264-GROUP" } as StremioStream)).toBe(
+      false,
+    );
   });
 });

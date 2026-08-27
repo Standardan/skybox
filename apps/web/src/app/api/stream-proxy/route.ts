@@ -122,7 +122,18 @@ export async function GET(request: Request) {
   }
 
   if (requestUrl.searchParams.get("remuxAudio") === "1") {
-    const remuxed = await tryRemuxAudioStream(target, request.signal);
+    // Real report: a release tagged with two languages (English AND
+    // Russian audio both present) played in Russian despite an English
+    // preference — the file's DEFAULT (first) audio track isn't
+    // necessarily the preferred one; resolve-stream only asks for this
+    // when the release looks multi-language AND a specific preference is
+    // set (see hasMultipleLanguageTracksHint), so this is skipped
+    // entirely for the common single-language case.
+    const preferredAudioLang = requestUrl.searchParams.get("preferredAudioLang");
+    const audioStreamIndex = preferredAudioLang
+      ? await findPreferredAudioStreamIndex(target, preferredAudioLang)
+      : null;
+    const remuxed = await tryRemuxAudioStream(target, request.signal, audioStreamIndex);
     if (remuxed) return remuxed;
     // Real regression this guards against: sources that used to at least
     // play silently (audio-incompatible, pre-remux) were, for some
@@ -170,6 +181,109 @@ export async function GET(request: Request) {
   return new Response(upstream.body, { status: upstream.status, headers });
 }
 
+/** This app's 2-letter LANGUAGE_OPTIONS codes -> ISO 639-2 (both the bibliographic and terminology variant where they differ — ffprobe/Matroska language tags can carry either). */
+const LANGUAGE_ISO639_2: Record<string, string[]> = {
+  en: ["eng"],
+  es: ["spa"],
+  fr: ["fre", "fra"],
+  de: ["ger", "deu"],
+  it: ["ita"],
+  pt: ["por"],
+  ru: ["rus"],
+  hi: ["hin"],
+  ja: ["jpn"],
+  ko: ["kor"],
+  zh: ["chi", "zho"],
+};
+
+const FFPROBE_TIMEOUT_MS = 10_000;
+
+interface FfprobeAudioStream {
+  codec_type?: string;
+  tags?: { language?: string };
+}
+
+/**
+ * Reads the REAL per-track language metadata from the file itself (not
+ * the release title, which only tells you a language is present
+ * SOMEWHERE, never which track order) and returns the audio-relative
+ * index (0, 1, 2... among audio streams only, matching ffmpeg's own
+ * `-map 0:a:N` convention — `-select_streams a` below already filters to
+ * just audio, so array position IS that index) of the track tagged with
+ * `preferredLanguage`. Null on anything short of a confident match —
+ * unknown language code, ffprobe failure/timeout, no tags at all, or no
+ * track actually tagged with it — so the caller falls back to its
+ * previous "just take the first audio track" behavior rather than
+ * guessing wrong.
+ */
+async function findPreferredAudioStreamIndex(target: URL, preferredLanguage: string): Promise<number | null> {
+  const isoCodes = LANGUAGE_ISO639_2[preferredLanguage];
+  if (!isoCodes) return null;
+
+  const args = [
+    "-timeout",
+    String(FFPROBE_TIMEOUT_MS * 1000),
+    "-v",
+    "error",
+    "-print_format",
+    "json",
+    "-show_entries",
+    "stream=codec_type:stream_tags=language",
+    "-select_streams",
+    "a",
+    target.toString(),
+  ];
+  const child = spawn("ffprobe", args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  let stdout = "";
+  let stderrTail = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-FFMPEG_STDERR_TAIL_BYTES);
+  });
+
+  const exitCode = await new Promise<number | null>((resolve) => {
+    const timer = setTimeout(() => {
+      if (!child.killed) child.kill("SIGKILL");
+      resolve(null);
+    }, FFPROBE_TIMEOUT_MS);
+    child.once("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+
+  if (exitCode !== 0) {
+    if (exitCode !== null) {
+      console.error(`[stream-proxy] ffprobe exited ${exitCode} probing ${target.hostname}`, stderrTail);
+    }
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(stdout) as { streams?: FfprobeAudioStream[] };
+    const audioStreams = parsed.streams ?? [];
+    const matchIndex = audioStreams.findIndex((s) => {
+      const lang = s.tags?.language?.toLowerCase();
+      return lang ? isoCodes.includes(lang) : false;
+    });
+    if (matchIndex === -1) {
+      console.log(`[stream-proxy] no audio track tagged "${preferredLanguage}" for ${target.hostname}, taking the first one`);
+      return null;
+    }
+    return matchIndex;
+  } catch (error) {
+    console.error(`[stream-proxy] could not parse ffprobe output for ${target.hostname}`, error);
+    return null;
+  }
+}
+
 const FFMPEG_STDERR_TAIL_BYTES = 4000;
 // Bounds how long we'll wait for ffmpeg to actually produce output before
 // giving up and falling back to a plain passthrough. Real regression this
@@ -212,8 +326,17 @@ const REMUX_STARTUP_TIMEOUT_MS = 15_000;
  * on any failure to actually start producing output — the caller falls
  * back to a plain passthrough in that case, so remux can only ever make
  * things better, never worse, than serving the file unmodified.
+ *
+ * `audioStreamIndex` (from findPreferredAudioStreamIndex, below) picks a
+ * SPECIFIC audio track by its audio-relative index instead of always
+ * taking the first one — null (no preference found/needed) keeps the
+ * previous "just take whatever's first" behavior.
  */
-async function tryRemuxAudioStream(target: URL, clientSignal: AbortSignal): Promise<Response | null> {
+async function tryRemuxAudioStream(
+  target: URL,
+  clientSignal: AbortSignal,
+  audioStreamIndex: number | null,
+): Promise<Response | null> {
   const args = [
     // ffmpeg's own protocol-level I/O timeout (microseconds) — guards
     // against a stalled read mid-stream, not just a slow start; the
@@ -235,7 +358,7 @@ async function tryRemuxAudioStream(target: URL, clientSignal: AbortSignal): Prom
     "-map",
     "0:v:0",
     "-map",
-    "0:a:0",
+    `0:a:${audioStreamIndex ?? 0}`,
     "-c:v",
     "copy",
     "-c:a",

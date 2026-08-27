@@ -45,6 +45,15 @@ RUN groupadd --system --gid 1001 skybox && useradd --system --uid 1001 --gid sky
 # acceleration for that) — audio-only remux is the part that's actually
 # achievable here.
 COPY --from=mwader/static-ffmpeg:9.0.1 /ffmpeg /usr/local/bin/ffmpeg
+# ffprobe (same image, same static-binary deal) — stream-proxy.ts uses it
+# to read a multi-audio-track release's real per-track language metadata
+# before remuxing, so it can select the viewer's actual preferred-
+# language track explicitly instead of blindly taking whichever audio
+# stream happens to be first in the file (confirmed real bug: a release
+# with both English and Russian audio played in Russian despite an
+# English preference — HDRezka-style Russian releases commonly put the
+# Russian dub first, with English as a secondary/alternate track).
+COPY --from=mwader/static-ffmpeg:9.0.1 /ffprobe /usr/local/bin/ffprobe
 # Real production error this fixes: ffmpeg's own TLS library failed to
 # verify the debrid CDN's certificate ("SSL routines::certificate verify
 # failed") on every single source, while Node's own fetch() — used by
