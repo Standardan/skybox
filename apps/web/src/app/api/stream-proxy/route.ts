@@ -25,6 +25,38 @@ import { spawn } from "node:child_process";
 import { Readable } from "node:stream";
 import { getCurrentUser } from "@/lib/session";
 
+/**
+ * Real production crash this guards against: killing the ffmpeg child
+ * with SIGKILL while Readable.toWeb(child.stdout) is actively bridging
+ * its output into a Response — which happens routinely here, since the
+ * auto-retry loop aborts the in-flight request the instant it moves to
+ * the next source — can make the underlying pipe closure and the
+ * process's death race each other, and Node's stream-to-web bridge isn't
+ * always robust against both an 'error' and a 'close'/'end' landing on
+ * the same web-stream controller: the second one throws
+ * `ERR_INVALID_STATE: Controller is already closed`, as an
+ * uncaughtException Express-request-scoped try/catch can't reach (it
+ * fires from inside Node's internal stream machinery, not synchronously
+ * from any of our own code). Reproducing this exactly wasn't possible in
+ * this sandbox — killChild below now explicitly destroys the stream
+ * before killing the process (the Node-recommended way to abort a stream
+ * being read, and the likely real fix), but this stays as a safety net
+ * regardless: by the time this fires, the client has already disconnected
+ * and nobody is waiting on the response, so swallowing just this one
+ * specific, well-understood race is safe.
+ *
+ * Deliberately a no-op (not a rethrow) for anything that isn't this exact
+ * case: `process.on` supports multiple listeners, and whatever Next.js's
+ * own uncaughtException handling already does for every OTHER kind of
+ * crash keeps running exactly as before — this listener only ever
+ * intercepts the one specific, identified race, never anything else.
+ */
+process.on("uncaughtException", (error) => {
+  if (error instanceof Error && error.message.includes("Controller is already closed")) {
+    console.warn("[stream-proxy] swallowed a benign closed-controller race from an aborted remux", error.message);
+  }
+});
+
 const UPSTREAM_TIMEOUT_MS = 20_000;
 const PASSTHROUGH_RESPONSE_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges"];
 
@@ -227,7 +259,17 @@ async function tryRemuxAudioStream(target: URL, clientSignal: AbortSignal): Prom
       console.error(`[stream-proxy] ffmpeg exited ${code} remuxing ${target.hostname}`, stderrTail);
     }
   });
+  // Destroying the stream FIRST (not just killing the process) matters
+  // once Readable.toWeb(child.stdout) is actively bridging this into a
+  // Response, below — Node's own .destroy() drives a single, predictable
+  // 'close' through the stream, whereas killing the process first lets
+  // the pipe close abruptly on its own via the OS, which can race an
+  // 'error' against an 'end'/'close' landing on the SAME web-stream
+  // controller (see the uncaughtException listener above for what that
+  // produces). Safe to call before the Response even exists too — a
+  // Readable that's never been read from is still safe to destroy.
   function killChild() {
+    if (!child.stdout.destroyed) child.stdout.destroy();
     if (!child.killed) child.kill("SIGKILL");
   }
   clientSignal.addEventListener("abort", killChild, { once: true });
