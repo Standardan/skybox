@@ -1,10 +1,23 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { isCached, detectResolution, hasLikelyIncompatibleAudio } from "@skybox/core/addon-client";
+import {
+  isCached,
+  detectResolution,
+  hasLikelyIncompatibleAudio,
+  isLikelyUnplayableContainer,
+  matchesPreferredLanguage,
+  LANGUAGE_OPTIONS,
+} from "@skybox/core/addon-client";
 import type { MediaType, PlaybackPrefs, StremioStream } from "@skybox/core/shared";
 import { Player, type PlayerSource } from "@/components/Player";
 import styles from "./PlaybackControls.module.css";
+
+interface PlaybackPrefsResult {
+  streams: StremioStream[];
+  /** True only when a language filter was requested but matched nothing at all — the filter was skipped rather than leaving a dead "no sources" end for an otherwise-available title. */
+  languageFilterFellBack: boolean;
+}
 
 /**
  * `aggregateStreams` already ranks cached-first-then-resolution by default
@@ -12,10 +25,13 @@ import styles from "./PlaybackControls.module.css";
  * detection when the user's actual saved preference differs — resolution
  * priority first when cache isn't preferred, and a specific resolution
  * pinned to the front when one is chosen. Stable otherwise (preserves
- * `aggregateStreams`' own tie-break order).
+ * `aggregateStreams`' own tie-break order). A preferred language, if set,
+ * then actually filters (not just re-sorts) the list — but never down to
+ * zero: if nothing matches, the filter is skipped for this title rather
+ * than silently hiding every source.
  */
-function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): StremioStream[] {
-  return streams
+function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): PlaybackPrefsResult {
+  const sorted = streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
       if (prefs.preferredResolution !== "any") {
@@ -31,6 +47,15 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Str
       return a.index - b.index;
     })
     .map(({ stream }) => stream);
+
+  if (prefs.preferredLanguage === "any") {
+    return { streams: sorted, languageFilterFellBack: false };
+  }
+  const filtered = sorted.filter((stream) => matchesPreferredLanguage(stream, prefs.preferredLanguage));
+  if (filtered.length === 0 && sorted.length > 0) {
+    return { streams: sorted, languageFilterFellBack: true };
+  }
+  return { streams: filtered, languageFilterFellBack: false };
 }
 
 function reportProgress(metaId: string, type: MediaType, videoId: string, positionSec: number, durationSec: number) {
@@ -108,6 +133,10 @@ export function PlaybackControls({
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [playerSource, setPlayerSource] = useState<PlayerSource | null>(null);
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
+  // The REAL resolved filename (not a title guess) — lets the container
+  // warning below be reliable instead of a heuristic, since this is the
+  // exact file about to be handed to <video>.
+  const [playingFilename, setPlayingFilename] = useState<string | null>(null);
   // Owns the currently-running auto-retry loop (if any) so it can actually
   // be cancelled — a stuck/slow network request (a real report: ECONNRESET
   // hanging for a while before failing) used to keep the loop running with
@@ -116,7 +145,10 @@ export function PlaybackControls({
   // back open on its next failure regardless.
   const abortRef = useRef<AbortController | null>(null);
 
-  const streams = useMemo(() => applyPlaybackPrefs(rawStreams, playbackPrefs), [rawStreams, playbackPrefs]);
+  const { streams, languageFilterFellBack } = useMemo(
+    () => applyPlaybackPrefs(rawStreams, playbackPrefs),
+    [rawStreams, playbackPrefs],
+  );
 
   /**
    * A single source's *resolve* step (not playback) failing — e.g. a debrid
@@ -156,6 +188,7 @@ export function PlaybackControls({
           if (result.ok && result.playableUrl) {
             setPlayerSource({ url: result.playableUrl, format: "native" });
             setPlayingIndex(index);
+            setPlayingFilename(result.filename ?? null);
             setResolvingIndex(null);
             return;
           }
@@ -229,6 +262,12 @@ export function PlaybackControls({
       </div>
 
       {resolveError && <p className={styles.errorMessage}>{resolveError}</p>}
+      {languageFilterFellBack && (
+        <p className={styles.message}>
+          No sources tagged for {LANGUAGE_OPTIONS.find((l) => l.code === playbackPrefs.preferredLanguage)?.label ?? "your language"} —
+          showing all sources instead.
+        </p>
+      )}
 
       {sourcesOpen && (
         // Fixed positioning (not normal flow) so this escapes TitleHero's
@@ -285,6 +324,14 @@ export function PlaybackControls({
       {playerSource && (
         <div className={styles.playerOverlay}>
           <div className={styles.playerFrame}>
+            {playingFilename && isLikelyUnplayableContainer(playingFilename) && (
+              <p className={styles.audioWarningBanner} role="status">
+                Black or frozen screen? This file (<strong>{playingFilename}</strong>) is an MKV (or similar)
+                container — resolving worked and the file is real, but browsers can&rsquo;t play that container
+                directly, so nothing loads. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different
+                source from &ldquo;All sources&rdquo; — an MP4/WEBRip release is more likely to actually play.
+              </p>
+            )}
             {playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!) && (
               <p className={styles.audioWarningBanner} role="status">
                 No sound? This release&rsquo;s audio format (DTS/AC3/TrueHD/Atmos) usually can&rsquo;t be played by a

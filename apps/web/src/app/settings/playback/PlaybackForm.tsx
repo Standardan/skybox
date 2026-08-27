@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import type { PlaybackPrefs } from "@skybox/core/shared";
+import { LANGUAGE_OPTIONS } from "@skybox/core/addon-client";
 import { SettingsRow, Switch } from "@/components/SettingsRow";
-import { setPreferCached, setPreferredResolution } from "./actions";
+import { setPreferCached, setPreferredResolution, setPreferredLanguage } from "./actions";
 import styles from "../settings.module.css";
 
 const RESOLUTIONS: Array<{ value: PlaybackPrefs["preferredResolution"]; label: string }> = [
@@ -51,6 +52,25 @@ export function PlaybackForm({ initialPrefs }: { initialPrefs: PlaybackPrefs }) 
           >
             {RESOLUTIONS.map((option) => (
               <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+        <SettingsRow
+          label="Preferred language"
+          htmlFor="playback-language"
+          hint="Hide sources tagged for a different language. A source with no language tag at all is assumed English — most releases only bother tagging language when it's not English."
+        >
+          <select
+            id="playback-language"
+            className={styles.input}
+            value={prefs.preferredLanguage}
+            onChange={async (e) => setPrefs(await setPreferredLanguage(e.target.value))}
+          >
+            <option value="any">Any language</option>
+            {LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.code} value={option.code}>
                 {option.label}
               </option>
             ))}

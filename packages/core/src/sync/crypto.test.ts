@@ -45,7 +45,7 @@ function sampleBundle(): SyncBundle {
         hiddenRails: [],
         sportsFirst: true,
       },
-      playback: { preferCached: true, preferredResolution: "any" },
+      playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
     },
     library: [
       {

@@ -116,6 +116,8 @@ export interface PlaybackPrefs {
   preferCached: boolean;
   /** "any" leaves aggregateStreams' own resolution ordering (2160p > 1080p > 720p) alone. */
   preferredResolution: "any" | "2160p" | "1080p" | "720p";
+  /** "any" shows every source unfiltered. Otherwise a language code (see LANGUAGE_OPTIONS) — hides sources tagged for a different language, see matchesPreferredLanguage. */
+  preferredLanguage: string;
 }
 
 export interface Config {

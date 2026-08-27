@@ -221,7 +221,7 @@ describe("integration: config + library round-trip through sync encryption", () 
         teamChannelHints: {},
       },
       ui: { railOrder: ["sports", "continue-watching"], hiddenRails: [], sportsFirst: true },
-      playback: { preferCached: true, preferredResolution: "any" },
+      playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
     };
     const library: LibraryItem[] = [
       { metaId: "tt1234567", type: "movie", state: "watching", progress: { videoId: "tt1234567", positionSec: 300, durationSec: 7200, updatedAt: 1_700_000_000_000 } },

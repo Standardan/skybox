@@ -20,6 +20,91 @@ const CACHED_PATTERN = /\[?\b(?:rd|pm|ad|tb|dl)\+\]?|⚡|\bcached\b/i;
  */
 const LIKELY_INCOMPATIBLE_AUDIO_PATTERN = /\b(?:ddp?\d(?:\.\d)?|dd\+|e-?ac-?3|eac-?3|ac-?3|dts(?:-?hd)?(?:\.?ma)?|true-?hd|atmos)\b/i;
 
+/**
+ * Container formats no major browser's native <video> element can parse
+ * at all — MKV above all, since it's the dominant container for anything
+ * above WEBRip quality on these release ecosystems. This isn't a codec
+ * problem (the video/audio inside might be perfectly playable); the
+ * browser's own demuxer just doesn't recognize the container, so nothing
+ * loads at all — no error event, no picture, no duration, controls that
+ * don't do anything because there's nothing actually loaded to control.
+ * Real report this addresses: "resolving works now, but the player opens
+ * to a black/frozen screen and pause/unpause don't do anything" — after
+ * confirming resolve itself succeeds, that's exactly what an unsupported
+ * container looks like, not a Skybox bug. mp4/m4v/webm/mov are fine.
+ */
+const UNPLAYABLE_CONTAINER_EXTENSIONS = new Set(["mkv", "avi", "wmv", "flv", "ts", "m2ts", "vob", "rm", "rmvb", "divx"]);
+
+/** Checked against the REAL resolved filename (not a title guess) — reliable, since this is the file that's actually about to be handed to <video>. */
+export function isLikelyUnplayableContainer(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return ext ? UNPLAYABLE_CONTAINER_EXTENSIONS.has(ext) : false;
+}
+
+export interface LanguageOption {
+  code: string;
+  label: string;
+}
+
+/** Shown in Settings and used to validate a saved preference — order is display order. */
+export const LANGUAGE_OPTIONS: LanguageOption[] = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "ru", label: "Russian" },
+  { code: "hi", label: "Hindi" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese" },
+];
+
+/** Release-title language hints — explicit words (incl. native spellings) and flag emoji, per language code. */
+const LANGUAGE_PATTERNS: Record<string, RegExp> = {
+  en: /\benglish\b|🇬🇧|🇺🇸|🇦🇺|🇨🇦/u,
+  es: /\bspanish\b|\bespa[nñ]ol\b|\bcastellano\b|\blatino\b|🇪🇸|🇲🇽|🇦🇷/iu,
+  fr: /\bfrench\b|\bfran[cç]ais\b|\bvostfr\b|\btruefrench\b|\bvff\b/iu,
+  de: /\bgerman\b|\bdeutsch\b|🇩🇪/iu,
+  it: /\bitalian[o]?\b|\bita\b|🇮🇹/iu,
+  pt: /\bportuguese\b|\bportugues\b|\bdublado\b|\blegendado\b|🇵🇹|🇧🇷/iu,
+  ru: /\brussian\b|🇷🇺/iu,
+  hi: /\bhindi\b|🇮🇳/u,
+  ja: /\bjapanese\b|🇯🇵/iu,
+  ko: /\bkorean\b|🇰🇷/iu,
+  zh: /\bchinese\b|\bmandarin\b|\bcantonese\b|🇨🇳/iu,
+};
+
+/** A release bundling multiple language tracks — plausibly includes whichever one the user wants, so treated as a match for any preference. */
+const MULTI_LANGUAGE_PATTERN = /\bmulti\b|\bdual[\s.-]?audio\b/i;
+
+function detectStreamLanguages(stream: StremioStream): { codes: string[]; multi: boolean } {
+  const text = streamText(stream);
+  const codes: string[] = [];
+  for (const [code, pattern] of Object.entries(LANGUAGE_PATTERNS)) {
+    if (pattern.test(text)) codes.push(code);
+  }
+  return { codes, multi: MULTI_LANGUAGE_PATTERN.test(text) };
+}
+
+/**
+ * Whether a stream matches a user's preferred language (Settings ->
+ * Playback). A release with no language explicitly mentioned defaults to
+ * matching only "en": these release ecosystems only bother tagging
+ * language when it's a departure from the assumed-English default, so an
+ * untagged release is overwhelmingly English in practice — filtering
+ * those out for an English preference would hide almost everything.
+ * "any" (the default) never filters at all.
+ */
+export function matchesPreferredLanguage(stream: StremioStream, preferredLanguage: string): boolean {
+  if (preferredLanguage === "any") return true;
+  const { codes, multi } = detectStreamLanguages(stream);
+  if (multi) return true;
+  if (codes.length === 0) return preferredLanguage === "en";
+  return codes.includes(preferredLanguage);
+}
+
 const RESOLUTION_PATTERNS: Array<{ rank: number; pattern: RegExp }> = [
   { rank: 0, pattern: /2160p|\b4k\b|\buhd\b/i },
   { rank: 1, pattern: /1080p/i },

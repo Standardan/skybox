@@ -36,7 +36,7 @@ function defaultConfig(): Config {
       hiddenRails: [],
       sportsFirst: true,
     },
-    playback: { preferCached: true, preferredResolution: "any" },
+    playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
   };
 }
 

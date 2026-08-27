@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { aggregateStreams, hasLikelyIncompatibleAudio } from "./aggregate.js";
+import {
+  aggregateStreams,
+  hasLikelyIncompatibleAudio,
+  isLikelyUnplayableContainer,
+  matchesPreferredLanguage,
+} from "./aggregate.js";
 import type { AddonRef, StremioManifest, StremioStream } from "../shared/types.js";
 
 function jsonResponse(body: unknown) {
@@ -215,5 +220,59 @@ describe("hasLikelyIncompatibleAudio", () => {
     "Movie.2024.1080p.WEB-DL.MP3.x264-GROUP",
   ])("does not flag %s", (title) => {
     expect(hasLikelyIncompatibleAudio({ title } as StremioStream)).toBe(false);
+  });
+});
+
+describe("isLikelyUnplayableContainer", () => {
+  it.each(["Movie.2024.1080p.mkv", "Movie.2024.720p.avi", "Old.Show.S01E01.wmv", "Clip.flv", "Recording.ts", "Disc.m2ts"])(
+    "flags %s",
+    (filename) => {
+      expect(isLikelyUnplayableContainer(filename)).toBe(true);
+    },
+  );
+
+  it.each(["Movie.2024.1080p.mp4", "Movie.2024.720p.webm", "Clip.mov", "Movie.2024.m4v"])(
+    "does not flag %s",
+    (filename) => {
+      expect(isLikelyUnplayableContainer(filename)).toBe(false);
+    },
+  );
+
+  it("is case-insensitive and handles a bare/missing extension safely", () => {
+    expect(isLikelyUnplayableContainer("Movie.2024.MKV")).toBe(true);
+    expect(isLikelyUnplayableContainer("no-extension-at-all")).toBe(false);
+  });
+});
+
+describe("matchesPreferredLanguage", () => {
+  it("never filters when preference is 'any'", () => {
+    expect(matchesPreferredLanguage({ title: "Movie.2024.FRENCH.1080p" } as StremioStream, "any")).toBe(true);
+  });
+
+  it("matches an explicitly-tagged language, and rejects a different explicit tag", () => {
+    const french = { title: "Movie.2024.FRENCH.1080p.WEB-DL" } as StremioStream;
+    expect(matchesPreferredLanguage(french, "fr")).toBe(true);
+    expect(matchesPreferredLanguage(french, "es")).toBe(false);
+    expect(matchesPreferredLanguage(french, "en")).toBe(false);
+  });
+
+  it("treats an untagged release as English by convention (tags only exist to flag a departure from that default)", () => {
+    const untagged = { title: "Movie.2024.1080p.WEB-DL.x264-GROUP" } as StremioStream;
+    expect(matchesPreferredLanguage(untagged, "en")).toBe(true);
+    expect(matchesPreferredLanguage(untagged, "es")).toBe(false);
+  });
+
+  it("treats a MULTI/dual-audio release as matching any specific preference", () => {
+    const multi = { title: "Movie.2024.MULTI.1080p.BluRay" } as StremioStream;
+    expect(matchesPreferredLanguage(multi, "es")).toBe(true);
+    expect(matchesPreferredLanguage(multi, "ja")).toBe(true);
+
+    const dual = { title: "Movie.2024.Dual-Audio.1080p" } as StremioStream;
+    expect(matchesPreferredLanguage(dual, "de")).toBe(true);
+  });
+
+  it("recognizes flag emoji and native-language spellings, not just English words", () => {
+    expect(matchesPreferredLanguage({ title: "Pelicula.2024.Español.1080p" } as StremioStream, "es")).toBe(true);
+    expect(matchesPreferredLanguage({ title: "Film.2024.1080p 🇩🇪" } as StremioStream, "de")).toBe(true);
   });
 });
