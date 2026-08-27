@@ -18,6 +18,8 @@ interface PlaybackPrefsResult {
   streams: StremioStream[];
   /** True only when a language filter was requested but matched nothing at all — the filter was skipped rather than leaving a dead "no sources" end for an otherwise-available title. */
   languageFilterFellBack: boolean;
+  /** True only when every source was flagged incompatible (audio codec, or HEVC on a browser that can't decode it) — filtering was skipped rather than leaving a dead "no sources" end when nothing better exists for this title. */
+  compatibilityFilterFellBack: boolean;
 }
 
 /**
@@ -95,14 +97,29 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
     })
     .map(({ stream }) => stream);
 
+  // "Fully hide" per a real complaint, not just deprioritize (the earlier
+  // fix): with so few releases actually compatible for a lot of titles,
+  // scrolling past several dead entries in "All sources" just to find the
+  // couple that might work was its own real annoyance. Same never-filter-
+  // to-zero fallback as the language filter below — showing every
+  // (labeled) source beats a false "no sources found" when nothing
+  // compatible exists for this title at all.
+  const compatible = sorted.filter((stream) => {
+    if (hasLikelyIncompatibleAudio(stream)) return false;
+    if (hevcUnplayable && hasLikelyHevcVideo(stream)) return false;
+    return true;
+  });
+  const withCompatibility = compatible.length > 0 ? compatible : sorted;
+  const compatibilityFilterFellBack = compatible.length === 0 && sorted.length > 0;
+
   if (prefs.preferredLanguage === "any") {
-    return { streams: sorted, languageFilterFellBack: false };
+    return { streams: withCompatibility, languageFilterFellBack: false, compatibilityFilterFellBack };
   }
-  const filtered = sorted.filter((stream) => matchesPreferredLanguage(stream, prefs.preferredLanguage));
-  if (filtered.length === 0 && sorted.length > 0) {
-    return { streams: sorted, languageFilterFellBack: true };
+  const filtered = withCompatibility.filter((stream) => matchesPreferredLanguage(stream, prefs.preferredLanguage));
+  if (filtered.length === 0 && withCompatibility.length > 0) {
+    return { streams: withCompatibility, languageFilterFellBack: true, compatibilityFilterFellBack };
   }
-  return { streams: filtered, languageFilterFellBack: false };
+  return { streams: filtered, languageFilterFellBack: false, compatibilityFilterFellBack };
 }
 
 function reportProgress(metaId: string, type: MediaType, videoId: string, positionSec: number, durationSec: number) {
@@ -197,7 +214,7 @@ export function PlaybackControls({
   // back open on its next failure regardless.
   const abortRef = useRef<AbortController | null>(null);
 
-  const { streams, languageFilterFellBack } = useMemo(
+  const { streams, languageFilterFellBack, compatibilityFilterFellBack } = useMemo(
     () => applyPlaybackPrefs(rawStreams, playbackPrefs),
     [rawStreams, playbackPrefs],
   );
@@ -323,6 +340,12 @@ export function PlaybackControls({
         <p className={styles.message}>
           No sources tagged for {LANGUAGE_OPTIONS.find((l) => l.code === playbackPrefs.preferredLanguage)?.label ?? "your language"} —
           showing all sources instead.
+        </p>
+      )}
+      {compatibilityFilterFellBack && (
+        <p className={styles.message}>
+          Every source for this title looks incompatible with this browser (HEVC video and/or an unsupported audio
+          format) — showing them all anyway, since there&rsquo;s nothing better to offer. They&rsquo;re labeled below.
         </p>
       )}
 
