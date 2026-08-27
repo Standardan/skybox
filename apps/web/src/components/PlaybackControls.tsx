@@ -392,8 +392,24 @@ const NEAR_END_THRESHOLD_SEC = 180;
  * sees a paused frame and clicks it themselves, exactly like before this
  * feature existed; best case this rarely fires at all, since a genuinely
  * working, unblocked source confirms within a second or two.
+ *
+ * Two different values, not one flat number — real feedback: "we're
+ * getting them from debrid services, and that should already be cached...
+ * loading basically instantly, so I don't understand why this is such a
+ * long process." A native (non-remuxed) source genuinely should confirm
+ * in a second or two once resolved, so it gets a short fallback — if it's
+ * not ready by then, something's actually stuck and revealing sooner is
+ * more helpful, not less. A source stream-proxy is remuxing (see
+ * playingRemuxed below) is a different story: it's routed through a
+ * server-side ffmpeg process that needs to actually start up and begin
+ * transcoding before the first bytes come back at all — stream-proxy's
+ * own REMUX_STARTUP_TIMEOUT_MS gives that up to 15s of real, unavoidable
+ * startup latency, so a 6s client-side fallback would reveal (or worse,
+ * feel "glitchy" revealing) a remux that's still legitimately starting
+ * up, not actually broken.
  */
-const SOURCE_READY_FALLBACK_MS = 6_000;
+const SOURCE_READY_FALLBACK_MS = 3_000;
+const SOURCE_READY_FALLBACK_MS_REMUXED = 16_000;
 
 async function resolveStream(stream: StremioStream, signal: AbortSignal): Promise<ResolveResponse> {
   const res = await fetch("/api/resolve-stream", {
@@ -658,9 +674,10 @@ export function PlaybackControls({
   // triggers this at all.
   useEffect(() => {
     if (!playerSource || sourceReady) return;
-    const timer = setTimeout(() => setSourceReady(true), SOURCE_READY_FALLBACK_MS);
+    const fallbackMs = playingRemuxed ? SOURCE_READY_FALLBACK_MS_REMUXED : SOURCE_READY_FALLBACK_MS;
+    const timer = setTimeout(() => setSourceReady(true), fallbackMs);
     return () => clearTimeout(timer);
-  }, [playerSource, sourceReady]);
+  }, [playerSource, sourceReady, playingRemuxed]);
 
   const handleSourceFailed = useCallback(() => {
     setPlayerSource(null);
