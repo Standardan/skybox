@@ -96,6 +96,16 @@ export default async function TitlePage({
       <main>
         {isSeries ? (
           <SeriesPlaybackSection
+            // Keyed by the SHOW's id, not the episode — SeriesPlaybackSection
+            // deliberately owns episode selection as internal state precisely
+            // so switching episodes does NOT remount it (that's the whole
+            // point of it existing). But if this page is ever reached via a
+            // same-route client-side navigation to a DIFFERENT show (e.g. a
+            // future "More like this" link), only a changing key forces the
+            // fresh mount that show genuinely needs — see onNextEpisode's doc
+            // comment in PlaybackControls.tsx for the real bug this class of
+            // stale-state issue already caused for "Next Episode".
+            key={id}
             type={type}
             metaId={id}
             mediaType={type as MediaType}

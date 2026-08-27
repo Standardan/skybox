@@ -386,6 +386,16 @@ const RESOLVE_POOL_CONCURRENCY = 2;
 const NEAR_END_THRESHOLD_SEC = 30;
 
 /**
+ * How long the "Up next" prompt counts down before auto-advancing once an
+ * episode genuinely ends — real feature request, matching how every other
+ * streaming service behaves. Long enough to comfortably read the next
+ * episode's title and cancel if this wasn't actually the intended episode
+ * (a real risk: `hasLikelyTrailerRuntime`-style mismatches, or simply
+ * changing your mind), short enough not to feel like a stalled player.
+ */
+const AUTO_ADVANCE_COUNTDOWN_SEC = 8;
+
+/**
  * Real regression report right after shipping the "Testing sources…"
  * screen: sources would resolve fine but playback would just never start
  * — "I can never get a show to start playing... anything." Root cause:
@@ -473,6 +483,7 @@ export function PlaybackControls({
   nextVideoId,
   nextEpisodeLabel,
   autoPlayOnMount,
+  onNextEpisode,
 }: {
   streams: StremioStream[];
   hasAddons: boolean;
@@ -495,6 +506,17 @@ export function PlaybackControls({
   nextEpisodeLabel?: string;
   /** True when this page was reached via a "Next Episode" click (see the ?autoplay=1 handoff) — triggers an immediate play attempt on mount, using a fresh background-prefetched source if one's ready. */
   autoPlayOnMount?: boolean;
+  /**
+   * Real regression: with episode selection now owned client-side by
+   * SeriesPlaybackSection, a router.push navigation to the same route
+   * (only the ?video= query param differing) doesn't remount that
+   * component — its own useState(initialVideoId) never picks up the new
+   * value, so "Next Episode" visibly did nothing. When provided, this is
+   * called instead of the old router.push fallback, so the caller can
+   * route through its own client-side selection (no navigation at all)
+   * instead of one that silently no-ops against a live client state tree.
+   */
+  onNextEpisode?: (videoId: string) => void;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   // A Set, not a single index — playIndex now races several candidates
@@ -567,6 +589,11 @@ export function PlaybackControls({
   const nextEpisodeCandidatesRef = useRef<Promise<StremioStream[]> | null>(null);
   const hasTriggeredPrefetchResolve = useRef(false);
   const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState(false);
+  // null = no active countdown (just the informational "Up next" prompt,
+  // shown near the real end — see handleProgress). A number counts down
+  // to an automatic handleNextEpisode() call once the episode genuinely
+  // ends (see the onEnded wiring below and the countdown effect).
+  const [nextEpisodeCountdown, setNextEpisodeCountdown] = useState<number | null>(null);
   const router = useRouter();
 
   const { streams, languageFilterFellBack, compatibilityFilterFellBack } = useMemo(() => {
@@ -860,14 +887,19 @@ export function PlaybackControls({
     (positionSec: number, durationSec: number) => {
       lastKnownPositionRef.current = positionSec;
       reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
-      if (
-        !hasTriggeredPrefetchResolve.current &&
-        nextVideoId &&
-        durationSec > 0 &&
-        durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
-      ) {
-        hasTriggeredPrefetchResolve.current = true;
-        void resolveNextEpisodePrefetch();
+      if (nextVideoId && durationSec > 0 && durationSec - positionSec <= NEAR_END_THRESHOLD_SEC) {
+        // Real feature request: offer the next episode once "probably the
+        // credits are playing now", not only once the file has fully
+        // ended. There's no real credits-timestamp data available (Cinemeta
+        // doesn't provide it) — this reuses the same near-the-real-end
+        // signal the background prefetch below already triggers on, as an
+        // honest, achievable proxy rather than claiming actual credits
+        // detection this app can't do.
+        setShowNextEpisodePrompt(true);
+        if (!hasTriggeredPrefetchResolve.current) {
+          hasTriggeredPrefetchResolve.current = true;
+          void resolveNextEpisodePrefetch();
+        }
       }
     },
     [metaId, mediaType, videoId, nextVideoId, resolveNextEpisodePrefetch],
@@ -875,8 +907,41 @@ export function PlaybackControls({
 
   const handleNextEpisode = useCallback(() => {
     if (!nextVideoId) return;
+    setNextEpisodeCountdown(null);
+    if (onNextEpisode) {
+      onNextEpisode(nextVideoId);
+      return;
+    }
+    // Fallback only — every real caller today (SeriesPlaybackSection)
+    // provides onNextEpisode. Kept for safety, not relied on: a plain
+    // navigation to the same route with only ?video= different doesn't
+    // reliably remount a client component that owns its own episode
+    // state (see onNextEpisode's doc comment).
     router.push(`/title/${mediaType}/${metaId}?video=${encodeURIComponent(nextVideoId)}&autoplay=1`);
-  }, [router, mediaType, metaId, nextVideoId]);
+  }, [router, mediaType, metaId, nextVideoId, onNextEpisode]);
+
+  /** Stops a pending auto-advance countdown without navigating anywhere — the viewer wants to stay right where they are. */
+  const cancelAutoAdvance = useCallback(() => setNextEpisodeCountdown(null), []);
+
+  // Real feature request: "we should work like any other streaming
+  // service where we automatically start playing the next episode once
+  // the one before it ends." Countdown only starts once the video has
+  // GENUINELY ended (see onEnded below) — the earlier near-end prompt
+  // (handleProgress above) is informational only, since the current
+  // episode may still have real content left even during likely credits.
+  // Ticks down once per second; reaching 0 triggers the same
+  // handleNextEpisode a manual click would. cancelAutoAdvance (the
+  // prompt's "Cancel" button) stops this by setting the countdown back
+  // to null, which this effect's guard clause then no-ops on.
+  useEffect(() => {
+    if (nextEpisodeCountdown === null) return;
+    if (nextEpisodeCountdown <= 0) {
+      handleNextEpisode();
+      return;
+    }
+    const timer = setTimeout(() => setNextEpisodeCountdown((c) => (c === null ? null : c - 1)), 1000);
+    return () => clearTimeout(timer);
+  }, [nextEpisodeCountdown, handleNextEpisode]);
 
   /**
    * Fires once real playback has held for CONFIRMED_WORKING_THRESHOLD_SEC
@@ -1112,11 +1177,22 @@ export function PlaybackControls({
                 {showNextEpisodePrompt && nextVideoId && (
                   <div className={styles.nextEpisodePrompt} role="status">
                     <span className={styles.sourceText}>
-                      {nextEpisodeLabel ? `Up next: ${nextEpisodeLabel}` : "Up next"}
+                      {nextEpisodeCountdown !== null
+                        ? `${nextEpisodeLabel ? `Up next: ${nextEpisodeLabel}` : "Up next"} — starting in ${nextEpisodeCountdown}s`
+                        : nextEpisodeLabel
+                          ? `Up next: ${nextEpisodeLabel}`
+                          : "Up next"}
                     </span>
-                    <button type="button" className={styles.primary} onClick={handleNextEpisode}>
-                      Next Episode
-                    </button>
+                    <div className={styles.row}>
+                      {nextEpisodeCountdown !== null && (
+                        <button type="button" className={styles.secondary} onClick={cancelAutoAdvance}>
+                          Cancel
+                        </button>
+                      )}
+                      <button type="button" className={styles.primary} onClick={handleNextEpisode}>
+                        {nextEpisodeCountdown !== null ? "Play Now" : "Next Episode"}
+                      </button>
+                    </div>
                   </div>
                 )}
               </>
@@ -1145,7 +1221,11 @@ export function PlaybackControls({
                   onConfirmedWorking={handleConfirmedWorking}
                   onProgress={handleProgress}
                   startPositionSec={lastKnownPositionRef.current}
-                  onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
+                  onEnded={() => {
+                    if (!nextVideoId) return;
+                    setShowNextEpisodePrompt(true);
+                    setNextEpisodeCountdown(AUTO_ADVANCE_COUNTDOWN_SEC);
+                  }}
                 />
               </>
             )}

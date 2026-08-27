@@ -168,6 +168,15 @@ export function SeriesPlaybackSection({
                   nextEpisode?.title || (nextEpisode ? `Episode ${nextEpisode.episode ?? ""}` : undefined)
                 }
                 autoPlayOnMount={pendingAutoPlay}
+                // Real regression this fixes: without this, PlaybackControls'
+                // own "Next Episode" fallback does a router.push to the same
+                // route with only ?video= different — which Next.js reconciles
+                // into THIS SAME component instance rather than remounting it,
+                // so this component's own selectedVideoId (useState, only
+                // reads its initializer on first mount) never picks up the
+                // change. Routing through the already-working client-side
+                // selection mechanism instead of a navigation fixes it.
+                onNextEpisode={(nextId) => void handleSelectEpisode(nextId, { autoPlay: true })}
               />
             )}
             {/* watchlistToggle is created server-side in page.tsx and passed down as a prop — wrapping it
