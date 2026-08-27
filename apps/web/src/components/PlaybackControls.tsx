@@ -59,6 +59,28 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
   const sorted = streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
+      // Checked first, ahead of every preference below — and only when
+      // this browser genuinely can't decode HEVC at all. Real report:
+      // with most 4K/HDR releases HEVC-encoded and this only a tertiary
+      // tiebreaker, "Play" (and manually browsing "All sources") kept
+      // landing on releases that were never going to work, making the
+      // small pool of actually-compatible options hard to find. A broken
+      // 4K/preferred-resolution stream is worth strictly less than a
+      // working one at a worse resolution, so this now outranks both the
+      // resolution and cached preferences instead of only breaking ties
+      // between two otherwise-equal candidates.
+      if (hevcUnplayable) {
+        const aHevc = Number(hasLikelyHevcVideo(a.stream));
+        const bHevc = Number(hasLikelyHevcVideo(b.stream));
+        if (aHevc !== bHevc) return aHevc - bHevc;
+      }
+      // Same reasoning as the HEVC check above, for audio this time —
+      // aggregateStreams already ranks by this server-side, but a
+      // non-default resolution/cached preference re-sorts the whole list
+      // here, which would otherwise undo that ordering.
+      const aAudio = Number(hasLikelyIncompatibleAudio(a.stream));
+      const bAudio = Number(hasLikelyIncompatibleAudio(b.stream));
+      if (aAudio !== bAudio) return aAudio - bAudio;
       if (prefs.preferredResolution !== "any") {
         const aMatch = Number(detectResolution(a.stream) !== prefs.preferredResolution);
         const bMatch = Number(detectResolution(b.stream) !== prefs.preferredResolution);
@@ -68,16 +90,6 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
         const aCached = Number(!isCached(a.stream));
         const bCached = Number(!isCached(b.stream));
         if (aCached !== bCached) return bCached - aCached; // inverted: uncached first
-      }
-      // Only a tiebreaker, and only when this browser genuinely can't
-      // decode HEVC at all — never overrides cached/resolution/preference
-      // ordering, just picks the source actually likely to play between
-      // two otherwise-equal candidates instead of letting the auto-retry
-      // loop grind through several HEVC releases in a row first.
-      if (hevcUnplayable) {
-        const aHevc = Number(hasLikelyHevcVideo(a.stream));
-        const bHevc = Number(hasLikelyHevcVideo(b.stream));
-        if (aHevc !== bHevc) return aHevc - bHevc;
       }
       return a.index - b.index;
     })

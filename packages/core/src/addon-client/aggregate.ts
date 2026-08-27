@@ -199,26 +199,35 @@ function dedupeStreams(streams: StremioStream[]): StremioStream[] {
 }
 
 /**
- * Rank streams: cached (RD+/PM+/... labeled) first, then by resolution hint
- * (2160p > 1080p > 720p > other), then browser-playable audio ahead of a
- * release whose audio codec a browser almost certainly can't decode (a
- * tertiary tiebreaker only — never overrides the cached/resolution
- * ranking, just picks the more likely-to-actually-have-sound option
- * between two otherwise-equal candidates), stable otherwise (original —
- * i.e. per-addon arrival — order is preserved for ties). Array.prototype.sort
- * is stable per spec, but we also carry the original index as an explicit
+ * Rank streams: browser-playable audio FIRST — ahead of cached status and
+ * resolution — then cached (RD+/PM+/... labeled), then by resolution hint
+ * (2160p > 1080p > 720p > other), stable otherwise (original — i.e.
+ * per-addon arrival — order is preserved for ties). Array.prototype.sort is
+ * stable per spec, but we also carry the original index as an explicit
  * tiebreaker so ranking behavior doesn't depend on engine internals.
+ *
+ * Audio compatibility used to be only a tertiary tiebreaker, below cached
+ * and resolution — meaning a cached 2160p release with DTS/AC3/TrueHD
+ * audio would still rank above a merely-fine 1080p AAC one, and "Play"
+ * would land on the silent one first. Real report: with HEVC/x265 also
+ * unplayable in Firefox (see hasLikelyHevcVideo — checked client-side,
+ * not here, since HEVC support is genuinely browser-dependent while an
+ * unplayable audio codec is universal), the pool of ever-actually-working
+ * releases for a given title can be small; a broken cached 4K stream is
+ * worth strictly less than a working 1080p one, so compatibility now
+ * outranks the "nicer to have" cached/resolution signals instead of only
+ * breaking ties between two otherwise-equal candidates.
  */
 function rankStreams(streams: StremioStream[]): StremioStream[] {
   return streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
+      const audioDiff = Number(hasLikelyIncompatibleAudio(a.stream)) - Number(hasLikelyIncompatibleAudio(b.stream));
+      if (audioDiff !== 0) return audioDiff;
       const cachedDiff = Number(!isCached(a.stream)) - Number(!isCached(b.stream));
       if (cachedDiff !== 0) return cachedDiff;
       const resolutionDiff = resolutionRank(a.stream) - resolutionRank(b.stream);
       if (resolutionDiff !== 0) return resolutionDiff;
-      const audioDiff = Number(hasLikelyIncompatibleAudio(a.stream)) - Number(hasLikelyIncompatibleAudio(b.stream));
-      if (audioDiff !== 0) return audioDiff;
       return a.index - b.index;
     })
     .map(({ stream }) => stream);
