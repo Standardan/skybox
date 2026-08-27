@@ -172,6 +172,11 @@ export function PlaybackControls({
   // warning below be reliable instead of a heuristic, since this is the
   // exact file about to be handed to <video>.
   const [playingFilename, setPlayingFilename] = useState<string | null>(null);
+  // Set by Player once it confirms real playback started with zero
+  // decoded audio tracks — see Player.tsx's onNoAudioTrackDetected doc
+  // comment. Catches releases with no audio-codec hint in the title at
+  // all, which hasLikelyIncompatibleAudio below has nothing to match.
+  const [noAudioTrackDetected, setNoAudioTrackDetected] = useState(false);
   // Owns the currently-running auto-retry loop (if any) so it can actually
   // be cancelled — a stuck/slow network request (a real report: ECONNRESET
   // hanging for a while before failing) used to keep the loop running with
@@ -228,6 +233,7 @@ export function PlaybackControls({
             setPlayerSource({ url: result.playableUrl, format: "native" });
             setPlayingIndex(index);
             setPlayingFilename(result.filename ?? null);
+            setNoAudioTrackDetected(false);
             setResolvingIndex(null);
             return;
           }
@@ -392,12 +398,21 @@ export function PlaybackControls({
                 for audio that actually plays.
               </p>
             )}
+            {noAudioTrackDetected &&
+              !(playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!)) && (
+                <p className={styles.audioWarningBanner} role="status">
+                  No sound? This file&rsquo;s release name didn&rsquo;t say so, but the browser confirms it couldn&rsquo;t
+                  find a playable audio track — the video itself is fine. This is common on WEB-DL sources with an
+                  untagged DTS/AC3/E-AC3 track. Try a different source from &ldquo;All sources&rdquo;.
+                </p>
+              )}
             <Player
               source={playerSource}
               title={title}
               poster={poster}
               onClose={() => setPlayerSource(null)}
               onSourceFailed={handleSourceFailed}
+              onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
               onProgress={(positionSec, durationSec) =>
                 reportProgress(metaId, mediaType, videoId, positionSec, durationSec)
               }

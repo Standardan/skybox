@@ -30,6 +30,14 @@ export interface PlayerProps {
   /** Called when playback fails after the automatic retry — the caller owns "try the next source" (F6). */
   onSourceFailed?: () => void;
   /**
+   * Fires once per source, at most, when the browser confirms real
+   * playback started but decoded zero audio tracks — see the effect below
+   * for why this beats guessing from the filename. Omit to skip the
+   * check entirely (e.g. live TV, where audio silently failing isn't
+   * currently surfaced this way).
+   */
+  onNoAudioTrackDetected?: () => void;
+  /**
    * Fires periodically (roughly every 15s, throttled) and on pause/unmount —
    * never on every timeupdate tick — so the caller can persist resume
    * position (B7). Omit in live-TV mode; there's nothing to "continue
@@ -65,6 +73,7 @@ export function Player({
   live,
   onClose,
   onSourceFailed,
+  onNoAudioTrackDetected,
   onProgress,
   startPositionSec,
 }: PlayerProps) {
@@ -146,6 +155,45 @@ export function Player({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.url, source.format]);
+
+  /**
+   * Real report this fixes: a release with no audio-codec hint in its
+   * title at all (so the filename-based DTS/AC3/TrueHD/Atmos heuristic in
+   * PlaybackControls has nothing to match against) played video fine but
+   * was completely silent — most likely an untagged EAC3/DD+ track,
+   * common on WEB-DL sources from a streaming service, which a browser
+   * still can't decode even though nothing in the name says so. Rather
+   * than guess further from the filename, this asks the browser directly
+   * once real playback starts: `audioTracks` (supported in Firefox and
+   * Safari, not Chrome — feature-detected, so this silently no-ops on
+   * Chrome rather than claiming a false negative) reports zero tracks
+   * when the container's audio couldn't be demuxed/decoded at all, which
+   * is a strictly more reliable signal than any title-text heuristic.
+   * Checked shortly after `playing` (not immediately) since track
+   * discovery can lag the first frame slightly. Reported up via a
+   * callback (rather than rendered here) so it lands in the same banner
+   * style as PlaybackControls' other, filename-driven warnings.
+   */
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !onNoAudioTrackDetected) return;
+
+    function checkAudioTracks() {
+      const tracks = (video as unknown as { audioTracks?: { length: number } }).audioTracks;
+      if (tracks && tracks.length === 0) onNoAudioTrackDetected?.();
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    function onPlaying() {
+      timer = setTimeout(checkAudioTracks, 1500);
+    }
+    video.addEventListener("playing", onPlaying);
+    return () => {
+      video.removeEventListener("playing", onPlaying);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source.url]);
 
   const handleFailure = useCallback(
     (hlsErrorData?: unknown) => {
