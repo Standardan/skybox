@@ -21,6 +21,8 @@
  */
 import "server-only";
 import dns from "node:dns/promises";
+import { spawn } from "node:child_process";
+import { Readable } from "node:stream";
 import { getCurrentUser } from "@/lib/session";
 
 const UPSTREAM_TIMEOUT_MS = 20_000;
@@ -87,6 +89,10 @@ export async function GET(request: Request) {
     return jsonError("That host isn't reachable through this proxy.", 403);
   }
 
+  if (requestUrl.searchParams.get("remuxAudio") === "1") {
+    return remuxAudioStream(target, request.signal);
+  }
+
   const upstreamRequestHeaders: Record<string, string> = {};
   const range = request.headers.get("range");
   if (range) upstreamRequestHeaders.range = range;
@@ -120,6 +126,92 @@ export async function GET(request: Request) {
   headers.set("Cache-Control", "no-store");
 
   return new Response(upstream.body, { status: upstream.status, headers });
+}
+
+const FFMPEG_STDERR_TAIL_BYTES = 4000;
+
+/**
+ * Real-time audio-only remux: video is stream-copied untouched (`-c:v
+ * copy`, no re-encode — cheap, near-zero CPU), audio is re-encoded to AAC
+ * (`-c:a aac`) since that's the one codec family every browser decodes
+ * natively. Fixes releases whose audio is DTS/AC3/E-AC3/TrueHD/Atmos —
+ * genuinely unplayable in any browser, not a Skybox bug, but no longer a
+ * dead end either.
+ *
+ * Deliberately NOT full video transcoding: real-time software 4K HEVC
+ * re-encoding needs GPU acceleration to keep up (Jellyfin's own hardware
+ * guidance all but requires it), which this app's typical VPS deployment
+ * doesn't have — attempting it would mean stuttering/buffering, likely a
+ * worse experience than not offering the source at all. Audio-only remux
+ * needs no such thing: decoding+encoding audio is a tiny fraction of the
+ * work video would be, so it's comfortably real-time on ordinary CPU.
+ *
+ * Known limitation, accepted for this first version: NO seeking support.
+ * ffmpeg writes a fragmented MP4 to a pipe (`frag_keyframe+empty_moov+
+ * default_base_moof` — the standard flags for streaming MP4 without
+ * being able to seek back and rewrite the moov atom at the end, which
+ * isn't possible on a pipe), with no known total length up front, so
+ * there's no byte-offset-to-time mapping for the browser to compute a
+ * meaningful Range request from — the incoming Range header is ignored
+ * entirely here. Playback works start to finish; scrubbing doesn't.
+ * Properly fixing that means HLS segmenting with a real playlist, a
+ * meaningfully bigger feature than this pass — noted, not attempted.
+ */
+function remuxAudioStream(target: URL, clientSignal: AbortSignal): Response {
+  const args = [
+    "-loglevel",
+    "error",
+    "-nostats",
+    "-reconnect",
+    "1",
+    "-reconnect_streamed",
+    "1",
+    "-reconnect_delay_max",
+    "5",
+    "-i",
+    target.toString(),
+    "-map",
+    "0:v:0",
+    "-map",
+    "0:a:0",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-f",
+    "mp4",
+    "-movflags",
+    "frag_keyframe+empty_moov+default_base_moof",
+    "pipe:1",
+  ];
+  const child = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"] });
+
+  let stderrTail = "";
+  child.stderr.on("data", (chunk: Buffer) => {
+    stderrTail = (stderrTail + chunk.toString("utf8")).slice(-FFMPEG_STDERR_TAIL_BYTES);
+  });
+  child.on("close", (code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`[stream-proxy] ffmpeg exited ${code} remuxing ${target.hostname}`, stderrTail);
+    }
+  });
+  // Can't change the HTTP status by the time this fires (the Response
+  // below has already gone out with the process's stdout as its body) —
+  // logged so a missing/broken ffmpeg binary is at least diagnosable
+  // server-side instead of just an empty response with no explanation.
+  child.on("error", (error) => {
+    console.error(`[stream-proxy] failed to start ffmpeg for ${target.hostname}`, error);
+  });
+  function killChild() {
+    if (!child.killed) child.kill("SIGKILL");
+  }
+  clientSignal.addEventListener("abort", killChild, { once: true });
+  child.once("exit", () => clientSignal.removeEventListener("abort", killChild));
+
+  const headers = new Headers({ "Content-Type": "video/mp4", "Cache-Control": "no-store" });
+  return new Response(Readable.toWeb(child.stdout) as unknown as ReadableStream, { status: 200, headers });
 }
 
 function jsonError(message: string, status: number): Response {

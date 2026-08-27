@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { HttpError } from "@skybox/core/shared";
+import { hasLikelyIncompatibleAudio } from "@skybox/core/addon-client";
 import {
   isDebridConnected,
   resolveDebridSource,
@@ -52,6 +53,9 @@ interface ResolveRequestBody {
   infoHash?: string;
   fileIdx?: number;
   url?: string;
+  /** Release title/name — used only to decide whether this source's audio needs remuxing (see proxiedVideoUrl below). */
+  title?: string;
+  name?: string;
 }
 
 interface ResolveSuccess {
@@ -72,9 +76,22 @@ interface ResolveSuccess {
  * the link) instead of handing the raw CDN URL to the browser sidesteps
  * that regardless of the exact mechanism — same idea as the IPTV mixed-
  * content proxy, applied here for a different reason.
+ *
+ * `remuxAudio` tells the proxy to run this through ffmpeg (video stream-
+ * copied untouched, audio re-encoded to AAC) instead of a plain
+ * passthrough — decided here, not client-side, since this is the one
+ * place that actually has the release's title/name to run
+ * hasLikelyIncompatibleAudio against. Real feature request: "make
+ * everything compatible" for DTS/AC3/TrueHD/Atmos releases — full video
+ * transcoding (the HEVC side of the same complaint) isn't realistic on
+ * this app's GPU-less VPS deployment, but audio-only remux is cheap and
+ * genuinely real-time even on modest hardware, so it's the part that's
+ * actually achievable.
  */
-function proxiedVideoUrl(rawUrl: string): string {
-  return `/api/stream-proxy?url=${encodeURIComponent(rawUrl)}`;
+function proxiedVideoUrl(rawUrl: string, remuxAudio: boolean): string {
+  const params = new URLSearchParams({ url: rawUrl });
+  if (remuxAudio) params.set("remuxAudio", "1");
+  return `/api/stream-proxy?${params.toString()}`;
 }
 
 /**
@@ -121,13 +138,14 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     return NextResponse.json({ ok: false, message: "Invalid request body.", retryable: false }, { status: 400 });
   }
 
-  const { infoHash, fileIdx, url } = body;
+  const { infoHash, fileIdx, url, title, name } = body;
   if (!infoHash && !url) {
     return NextResponse.json(
       { ok: false, message: "This source has no infoHash or url to resolve.", retryable: false },
       { status: 400 },
     );
   }
+  const remuxAudio = hasLikelyIncompatibleAudio({ title, name });
 
   if (!(await isDebridConnected())) {
     // Not source-specific — every other source hits this exact same check.
@@ -149,7 +167,11 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       console.log(
         `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
       );
-      return NextResponse.json({ ok: true, playableUrl: proxiedVideoUrl(result.playableUrl), filename: result.filename });
+      return NextResponse.json({
+        ok: true,
+        playableUrl: proxiedVideoUrl(result.playableUrl, remuxAudio),
+        filename: result.filename,
+      });
     }
 
     // url path: try unrestricting through the debrid provider first; some addons
@@ -166,14 +188,14 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     if (unrestricted) {
       return NextResponse.json({
         ok: true,
-        playableUrl: proxiedVideoUrl(unrestricted.playableUrl),
+        playableUrl: proxiedVideoUrl(unrestricted.playableUrl, remuxAudio),
         filename: unrestricted.filename,
       });
     }
 
     return NextResponse.json({
       ok: true,
-      playableUrl: proxiedVideoUrl(url!),
+      playableUrl: proxiedVideoUrl(url!, remuxAudio),
       filename: url!.split("/").pop() || "stream",
     });
   } catch (error) {

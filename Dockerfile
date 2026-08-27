@@ -34,6 +34,17 @@ ENV NODE_ENV=production
 ENV SKYBOX_DATA_DIR=/data
 ENV SKYBOX_VERSION_FILE=/app/VERSION.txt
 RUN groupadd --system --gid 1001 skybox && useradd --system --uid 1001 --gid skybox skybox
+# Static, dependency-free ffmpeg/ffprobe binaries — no apt-get/apk install
+# needed, just a straight binary copy from an image built for exactly this
+# (github.com/wader/static-ffmpeg). Used by stream-proxy.ts to remux audio
+# (DTS/AC3/TrueHD -> AAC, video stream-copied untouched — cheap, real-time
+# even without hardware acceleration) for releases whose audio a browser
+# can't decode natively. Deliberately NOT full video transcoding: this VPS
+# has no GPU, and real-time 4K HEVC re-encoding on CPU alone isn't
+# realistic (Jellyfin's own hardware guidance all but requires GPU
+# acceleration for that) — audio-only remux is the part that's actually
+# achievable here.
+COPY --from=mwader/static-ffmpeg:9.0.1 /ffmpeg /usr/local/bin/ffmpeg
 # --chown so the unprivileged `skybox` user (below) can actually write into
 # these at runtime — Next lazily creates apps/web/.next/cache the first
 # time it caches an optimized image, and a root-owned tree it can't write

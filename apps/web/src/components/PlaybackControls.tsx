@@ -104,8 +104,18 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
   // to-zero fallback as the language filter below — showing every
   // (labeled) source beats a false "no sources found" when nothing
   // compatible exists for this title at all.
+  //
+  // Audio-incompatible sources are NOT filtered out here (unlike HEVC) —
+  // resolve-stream now transparently remuxes DTS/AC3/TrueHD/Atmos audio
+  // to AAC server-side (see stream-proxy.ts), so these actually do play;
+  // they're just ranked behind natively-compatible sources above, since
+  // native playback is still cheaper (no ffmpeg process, no startup
+  // delay, and remuxed sources don't support seeking — see stream-proxy's
+  // doc comment). HEVC video has no such fix on this VPS (no GPU, and
+  // real-time software HEVC transcoding isn't realistic in this app's
+  // deployment context), so that's still a real, unfixable incompatibility
+  // and stays filtered when this browser can't decode it.
   const compatible = sorted.filter((stream) => {
-    if (hasLikelyIncompatibleAudio(stream)) return false;
     if (hevcUnplayable && hasLikelyHevcVideo(stream)) return false;
     return true;
   });
@@ -150,6 +160,11 @@ async function resolveStream(stream: StremioStream, signal: AbortSignal): Promis
       infoHash: stream.infoHash,
       fileIdx: stream.fileIdx,
       url: stream.url,
+      // Title/name only — used server-side purely to decide whether this
+      // release's audio needs remuxing (hasLikelyIncompatibleAudio), same
+      // detection this file already runs client-side for ranking/display.
+      title: stream.title,
+      name: stream.name,
     }),
     signal,
   });
@@ -344,8 +359,9 @@ export function PlaybackControls({
       )}
       {compatibilityFilterFellBack && (
         <p className={styles.message}>
-          Every source for this title looks incompatible with this browser (HEVC video and/or an unsupported audio
-          format) — showing them all anyway, since there&rsquo;s nothing better to offer. They&rsquo;re labeled below.
+          Every source for this title is HEVC video, which this browser can&rsquo;t decode — showing them all
+          anyway, since there&rsquo;s nothing better to offer. Try Chrome, Edge, or Safari for a better shot at
+          playing one of these.
         </p>
       )}
 
@@ -380,9 +396,9 @@ export function PlaybackControls({
                   <span className={styles.sourceText}>
                     {streamLabel(stream)}
                     {hasLikelyIncompatibleAudio(stream) && (
-                      <span className={styles.audioWarning} title="This release's audio format (DTS/AC3/TrueHD/Atmos) usually can't be played by a browser — video may be silent.">
+                      <span className={styles.audioWarning} title="This release's audio format (DTS/AC3/TrueHD/Atmos) isn't natively browser-playable, so it's converted automatically on play — takes a few extra seconds to start, and skipping around isn't supported.">
                         {" "}
-                        ⚠ audio may not play
+                        ⚙ audio converted automatically
                       </span>
                     )}
                     {hevcUnplayable && hasLikelyHevcVideo(stream) && (
@@ -428,19 +444,17 @@ export function PlaybackControls({
             )}
             {playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!) && (
               <p className={styles.audioWarningBanner} role="status">
-                No sound? This release&rsquo;s audio format (DTS/AC3/TrueHD/Atmos) usually can&rsquo;t be played by a
-                browser — the video itself is fine. Try a different source from &ldquo;All sources&rdquo; labeled AAC
-                for audio that actually plays.
+                This release&rsquo;s audio format (DTS/AC3/TrueHD/Atmos) isn&rsquo;t natively browser-playable, so
+                it&rsquo;s being converted automatically — audio may lag a few seconds behind, and the scrub bar
+                won&rsquo;t seek correctly on this source.
               </p>
             )}
-            {noAudioTrackDetected &&
-              !(playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!)) && (
-                <p className={styles.audioWarningBanner} role="status">
-                  No sound? This file&rsquo;s release name didn&rsquo;t say so, but the browser confirms it couldn&rsquo;t
-                  find a playable audio track — the video itself is fine. This is common on WEB-DL sources with an
-                  untagged DTS/AC3/E-AC3 track. Try a different source from &ldquo;All sources&rdquo;.
-                </p>
-              )}
+            {noAudioTrackDetected && (
+              <p className={styles.audioWarningBanner} role="status">
+                No sound? The browser confirms it couldn&rsquo;t find a playable audio track, even after automatic
+                conversion — the video itself is fine. Try a different source from &ldquo;All sources&rdquo;.
+              </p>
+            )}
             <Player
               source={playerSource}
               title={title}
