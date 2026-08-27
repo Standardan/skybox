@@ -19,6 +19,19 @@ export async function middleware(request: NextRequest) {
   const session = await decodeSession(request.cookies.get(SESSION_COOKIE)?.value);
   if (session) return NextResponse.next();
 
+  // A `fetch()`-based API call (e.g. resolve-stream) redirected to the
+  // /login *page* gets HTML back where it expected JSON — at best a parse
+  // error, at worst a same-origin fetch turned cross-origin by a scheme
+  // mismatch in the redirect target (seen for real: Safari reporting
+  // "access control checks" on a same-origin POST, right after a session
+  // went stale mid-session — `request.nextUrl`'s scheme follows
+  // `x-forwarded-proto`, not the browser's actual connection, so the
+  // redirect Location can come out `https://` on an http-only deployment).
+  // A plain 401 the client can actually branch on sidesteps all of that.
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return NextResponse.json({ ok: false, message: "Not signed in." }, { status: 401 });
+  }
+
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";
