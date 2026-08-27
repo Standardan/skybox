@@ -162,30 +162,48 @@ export function Player({
    * PlaybackControls has nothing to match against) played video fine but
    * was completely silent — most likely an untagged EAC3/DD+ track,
    * common on WEB-DL sources from a streaming service, which a browser
-   * still can't decode even though nothing in the name says so. Rather
-   * than guess further from the filename, this asks the browser directly
-   * once real playback starts: `audioTracks` (supported in Firefox and
-   * Safari, not Chrome — feature-detected, so this silently no-ops on
-   * Chrome rather than claiming a false negative) reports zero tracks
-   * when the container's audio couldn't be demuxed/decoded at all, which
-   * is a strictly more reliable signal than any title-text heuristic.
-   * Checked shortly after `playing` (not immediately) since track
-   * discovery can lag the first frame slightly. Reported up via a
-   * callback (rather than rendered here) so it lands in the same banner
-   * style as PlaybackControls' other, filename-driven warnings.
+   * still can't decode even though nothing in the name says so.
+   *
+   * First attempt at this used `audioTracks.length === 0` — confirmed
+   * wrong by a real retest that still showed no banner: `audioTracks`
+   * reflects tracks the DEMUXER found in the container, not whether the
+   * DECODER can actually produce sound from one, so a track the browser
+   * can enumerate but can't decode still counts as "1 track" there. This
+   * uses two read-only diagnostic properties instead — deliberately NOT
+   * the Web Audio API (`createMediaElementSource` would hijack the
+   * video's actual audio output through a new graph the caller has to
+   * route back to `destination` correctly, and getting that wrong risks
+   * silencing audio that would otherwise have played fine, which is a
+   * far worse regression than an occasional missing warning banner):
+   * Firefox's `mozHasAudio` ("contains an audio track that can be
+   * played" — decodability, not just presence) and Safari/WebKit's
+   * legacy `webkitAudioDecodedByteCount` (real decoded-byte count, so
+   * still 0 for a track that exists but can't decode). Neither touches
+   * playback in any way — pure readback. Checked a couple seconds after
+   * `playing` so a genuinely fine track has had time to actually decode
+   * some audio first. Reported up via a callback (rather than rendered
+   * here) so it lands in the same banner style as PlaybackControls'
+   * other, filename-driven warnings.
    */
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !onNoAudioTrackDetected) return;
 
-    function checkAudioTracks() {
-      const tracks = (video as unknown as { audioTracks?: { length: number } }).audioTracks;
-      if (tracks && tracks.length === 0) onNoAudioTrackDetected?.();
+    function checkForSilence() {
+      if (!video) return;
+      const v = video as unknown as { mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number };
+      if (typeof v.mozHasAudio === "boolean") {
+        if (!v.mozHasAudio) onNoAudioTrackDetected?.();
+        return;
+      }
+      if (typeof v.webkitAudioDecodedByteCount === "number") {
+        if (v.webkitAudioDecodedByteCount === 0) onNoAudioTrackDetected?.();
+      }
     }
 
     let timer: ReturnType<typeof setTimeout> | null = null;
     function onPlaying() {
-      timer = setTimeout(checkAudioTracks, 1500);
+      timer = setTimeout(checkForSilence, 2000);
     }
     video.addEventListener("playing", onPlaying);
     return () => {
