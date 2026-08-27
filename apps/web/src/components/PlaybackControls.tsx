@@ -525,11 +525,16 @@ export function PlaybackControls({
   // so both get suppressed rather than showing a scary banner for
   // something that's actually working now.
   const [playingRemuxed, setPlayingRemuxed] = useState(false);
-  // Set by Player once it confirms real playback started with zero
-  // decoded audio tracks — see Player.tsx's onNoAudioTrackDetected doc
-  // comment. Catches releases with no audio-codec hint in the title at
-  // all, which hasLikelyIncompatibleAudio below has nothing to match.
-  const [noAudioTrackDetected, setNoAudioTrackDetected] = useState(false);
+  // True once at least one source has been auto-skipped for confirmed
+  // silent audio (see handleNoAudioDetected below) — persists across the
+  // rest of this session so the user still sees why a source got skipped,
+  // even though it happens silently otherwise (same as a genuine
+  // playback failure). Real report: a silent source used to just show a
+  // warning banner while continuing to play — "you should never play
+  // this... this is horrible." A video with no audio isn't a lesser
+  // version of working, it's exactly as broken as a real playback error,
+  // and now treated as one.
+  const [noAudioSkipped, setNoAudioSkipped] = useState(false);
   // True once at least one source has been auto-skipped for looking like
   // a trailer (see handleLikelyTrailer below) — persists across the rest
   // of this session so the user still sees why a source got skipped,
@@ -653,7 +658,6 @@ export function PlaybackControls({
         setPlayingIndex(index);
         setPlayingFilename(result.filename ?? null);
         setPlayingRemuxed(result.remuxed ?? false);
-        setNoAudioTrackDetected(false);
         setResolvingIndices(new Set());
         return;
       }
@@ -726,6 +730,20 @@ export function PlaybackControls({
    */
   const handleLikelyTrailer = useCallback(() => {
     setTrailerSkipped(true);
+    handleSourceFailed();
+  }, [handleSourceFailed]);
+
+  /**
+   * Real report: a source confirmed silent (Player.tsx's
+   * onNoAudioTrackDetected — real decode-state check, not a title guess)
+   * used to just show a warning banner while continuing to play it —
+   * "you should never play this... this is horrible." A video with no
+   * audio isn't a degraded-but-acceptable result, it's exactly as broken
+   * as a real playback error, so this is now treated like one: same
+   * auto-advance-to-the-next-source path as handleLikelyTrailer above.
+   */
+  const handleNoAudioDetected = useCallback(() => {
+    setNoAudioSkipped(true);
     handleSourceFailed();
   }, [handleSourceFailed]);
 
@@ -902,7 +920,6 @@ export function PlaybackControls({
       setPlayingIndex(matchIndex >= 0 ? matchIndex : null);
       setPlayingFilename(cached.filename);
       setPlayingRemuxed(cached.remuxed);
-      setNoAudioTrackDetected(false);
     } else {
       // No fresh prefetch (didn't finish in time, or this is the first
       // episode with nothing to have prefetched) — falls back to the
@@ -968,6 +985,12 @@ export function PlaybackControls({
         <p className={styles.message}>
           Skipped a source that turned out to be a trailer, not the full movie — its actual length didn&rsquo;t
           match. Automatically tried another one.
+        </p>
+      )}
+      {noAudioSkipped && (
+        <p className={styles.message}>
+          Skipped a source with no audio — the browser confirmed it couldn&rsquo;t find a playable audio track,
+          even after automatic conversion. Automatically tried another one.
         </p>
       )}
 
@@ -1081,13 +1104,6 @@ export function PlaybackControls({
                     the scrub bar won&rsquo;t seek correctly on this source.
                   </p>
                 )}
-                {noAudioTrackDetected && (
-                  <p className={styles.audioWarningBanner} role="status">
-                    No sound? The browser confirms it couldn&rsquo;t find a playable audio track, even after
-                    automatic conversion — the video itself is fine. Try a different source from &ldquo;All
-                    sources&rdquo;.
-                  </p>
-                )}
                 {showNextEpisodePrompt && nextVideoId && (
                   <div className={styles.nextEpisodePrompt} role="status">
                     <span className={styles.sourceText}>
@@ -1117,7 +1133,7 @@ export function PlaybackControls({
                   poster={poster}
                   onClose={() => setPlayerSource(null)}
                   onSourceFailed={handleSourceFailed}
-                  onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
+                  onNoAudioTrackDetected={handleNoAudioDetected}
                   onLikelyTrailer={handleLikelyTrailer}
                   expectedRuntimeMinutes={expectedRuntimeMinutes}
                   onPlaybackReady={() => setSourceReady(true)}
