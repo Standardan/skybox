@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isLikelyTrailerRuntime } from "@skybox/core/shared";
 import styles from "./Player.module.css";
 
 export interface PlayerNowNext {
@@ -38,6 +39,17 @@ export interface PlayerProps {
    */
   onNoAudioTrackDetected?: () => void;
   /**
+   * Fires once, from `onLoadedMetadata`, when the real (now-known)
+   * duration of what's actually playing comes out suspiciously short
+   * next to `expectedRuntimeMinutes` — see runtime-check.ts's doc
+   * comment for why this is a reliable trailer-vs-real-movie signal.
+   * Omit `expectedRuntimeMinutes` (e.g. live TV, or no Cinemeta runtime
+   * data) to skip the check entirely.
+   */
+  onLikelyTrailer?: () => void;
+  /** Cinemeta's stated runtime in minutes — see onLikelyTrailer above. */
+  expectedRuntimeMinutes?: number;
+  /**
    * Fires periodically (roughly every 15s, throttled) and on pause/unmount —
    * never on every timeupdate tick — so the caller can persist resume
    * position (B7). Omit in live-TV mode; there's nothing to "continue
@@ -74,6 +86,8 @@ export function Player({
   onClose,
   onSourceFailed,
   onNoAudioTrackDetected,
+  onLikelyTrailer,
+  expectedRuntimeMinutes,
   onProgress,
   startPositionSec,
 }: PlayerProps) {
@@ -421,6 +435,15 @@ export function Player({
           if (hasSeekedToStart.current) return;
           hasSeekedToStart.current = true;
           const video = e.currentTarget;
+          if (
+            onLikelyTrailer &&
+            expectedRuntimeMinutes &&
+            Number.isFinite(video.duration) &&
+            isLikelyTrailerRuntime(video.duration, expectedRuntimeMinutes)
+          ) {
+            onLikelyTrailer();
+            return; // not the real movie — resuming into it wouldn't mean anything.
+          }
           // A few seconds of slack: don't bother seeking into the last
           // moments of a title, or resuming would just replay the ending.
           if (startPositionSec && video.duration && startPositionSec < video.duration - 5) {

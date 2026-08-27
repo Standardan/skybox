@@ -77,22 +77,6 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
         const bHevc = Number(hasLikelyHevcVideo(b.stream));
         if (aHevc !== bHevc) return aHevc - bHevc;
       }
-      // Same reasoning as the HEVC check above, for audio this time —
-      // aggregateStreams already ranks by this server-side, but a
-      // non-default resolution/cached preference re-sorts the whole list
-      // here, which would otherwise undo that ordering.
-      const aAudio = Number(hasLikelyIncompatibleAudio(a.stream));
-      const bAudio = Number(hasLikelyIncompatibleAudio(b.stream));
-      if (aAudio !== bAudio) return aAudio - bAudio;
-      // A suspected MKV/AVI/etc container is fixable the same way
-      // (stream-proxy's remux outputs MP4 regardless of input container)
-      // — this is a pre-resolve title guess, not the reliable post-resolve
-      // filename check the actual remux decision uses, so it's only a
-      // preference (skip the ffmpeg round-trip when a native-container
-      // source is otherwise equal), never a reason to hide anything.
-      const aContainer = Number(hasLikelyUnplayableContainerHint(a.stream));
-      const bContainer = Number(hasLikelyUnplayableContainerHint(b.stream));
-      if (aContainer !== bContainer) return aContainer - bContainer;
       if (prefs.preferredResolution !== "any") {
         const aMatch = Number(detectResolution(a.stream) !== prefs.preferredResolution);
         const bMatch = Number(detectResolution(b.stream) !== prefs.preferredResolution);
@@ -103,6 +87,23 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
         const bCached = Number(!isCached(b.stream));
         if (aCached !== bCached) return bCached - aCached; // inverted: uncached first
       }
+      // Audio codec and container used to outrank resolution/cache
+      // preference entirely — reverted per real usage feedback once
+      // stream-proxy's remux (audio -> AAC, container -> MP4, transparent
+      // and server-side) started working reliably: releases needing
+      // remux turned out to be the higher-quality, more reliable ones for
+      // a lot of titles, so burying them behind lower-quality natively-
+      // compatible releases was making things worse, not better. Back to
+      // only breaking a tie between two otherwise-equal candidates, same
+      // as aggregateStreams' own server-side ranking (see its doc
+      // comment). HEVC above stays a hard preference — that's still a
+      // genuinely unfixable limitation on this browser, unlike these two.
+      const aAudio = Number(hasLikelyIncompatibleAudio(a.stream));
+      const bAudio = Number(hasLikelyIncompatibleAudio(b.stream));
+      if (aAudio !== bAudio) return aAudio - bAudio;
+      const aContainer = Number(hasLikelyUnplayableContainerHint(a.stream));
+      const bContainer = Number(hasLikelyUnplayableContainerHint(b.stream));
+      if (aContainer !== bContainer) return aContainer - bContainer;
       return a.index - b.index;
     })
     .map(({ stream }) => stream);
@@ -205,6 +206,7 @@ export function PlaybackControls({
   videoId,
   playbackPrefs,
   resumePositionSec,
+  expectedRuntimeMinutes,
 }: {
   streams: StremioStream[];
   hasAddons: boolean;
@@ -218,6 +220,8 @@ export function PlaybackControls({
   playbackPrefs: PlaybackPrefs;
   /** Where to resume, from this instance's saved progress. Omit/0 to start at the beginning. */
   resumePositionSec?: number;
+  /** Cinemeta's stated runtime in minutes, if known — used to catch a resolved source that's actually just a trailer (see Player.tsx's onLikelyTrailer). */
+  expectedRuntimeMinutes?: number;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [resolvingIndex, setResolvingIndex] = useState<number | null>(null);
@@ -239,6 +243,12 @@ export function PlaybackControls({
   // comment. Catches releases with no audio-codec hint in the title at
   // all, which hasLikelyIncompatibleAudio below has nothing to match.
   const [noAudioTrackDetected, setNoAudioTrackDetected] = useState(false);
+  // True once at least one source has been auto-skipped for looking like
+  // a trailer (see handleLikelyTrailer below) — persists across the rest
+  // of this session so the user still sees why a source got skipped,
+  // even though it happens silently otherwise (same as a genuine
+  // playback failure).
+  const [trailerSkipped, setTrailerSkipped] = useState(false);
   // Owns the currently-running auto-retry loop (if any) so it can actually
   // be cancelled — a stuck/slow network request (a real report: ECONNRESET
   // hanging for a while before failing) used to keep the loop running with
@@ -336,6 +346,21 @@ export function PlaybackControls({
     }
   }, [playIndex, playingIndex, streams.length]);
 
+  /**
+   * A source that resolved and "played" but turned out to be a trailer,
+   * not the real movie (see Player.tsx's onLikelyTrailer / runtime-check.ts)
+   * — treated exactly like a genuine playback failure (auto-advance to
+   * the next source), since a trailer is never what the user actually
+   * wants. Unlike resolveError (reset at the start of every new attempt
+   * in playIndex), this notice deliberately persists so the user still
+   * sees WHY it jumped past one, instead of a silent skip that looks
+   * like nothing happened.
+   */
+  const handleLikelyTrailer = useCallback(() => {
+    setTrailerSkipped(true);
+    handleSourceFailed();
+  }, [handleSourceFailed]);
+
   if (!hasAddons) {
     return (
       <p className={styles.message}>
@@ -381,6 +406,12 @@ export function PlaybackControls({
           Every source for this title is HEVC video, which this browser can&rsquo;t decode — showing them all
           anyway, since there&rsquo;s nothing better to offer. Try Chrome, Edge, or Safari for a better shot at
           playing one of these.
+        </p>
+      )}
+      {trailerSkipped && (
+        <p className={styles.message}>
+          Skipped a source that turned out to be a trailer, not the full movie — its actual length didn&rsquo;t
+          match. Automatically tried another one.
         </p>
       )}
 
@@ -481,6 +512,8 @@ export function PlaybackControls({
               onClose={() => setPlayerSource(null)}
               onSourceFailed={handleSourceFailed}
               onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
+              onLikelyTrailer={handleLikelyTrailer}
+              expectedRuntimeMinutes={expectedRuntimeMinutes}
               onProgress={(positionSec, durationSec) =>
                 reportProgress(metaId, mediaType, videoId, positionSec, durationSec)
               }

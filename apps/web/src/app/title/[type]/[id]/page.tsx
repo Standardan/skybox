@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { aggregateStreams } from "@skybox/core/addon-client";
 import { findItem } from "@skybox/core/library";
 import type { MediaType, StremioMeta, StremioVideo } from "@skybox/core/shared";
+import { parseRuntimeMinutes } from "@skybox/core/shared";
 import { getCinemetaAddon, getStreamAddons, getCachedMeta } from "@/lib/addon-server";
 import { cinemetaBackgroundUrl } from "@/lib/cinemeta";
 import { readConfig } from "@/lib/config-store";
@@ -87,6 +88,10 @@ export default async function TitlePage({
   const currentEpisode = isSeries ? meta.videos!.find((v) => v.id === currentVideoId) : undefined;
   const playerTitle =
     isSeries && currentEpisode?.title ? `${meta.name} · ${currentEpisode.title}` : meta.name;
+  // Cinemeta's runtime applies per-episode for a series too, not just
+  // movies — same field either way. Used to catch a resolved source
+  // that's actually just a trailer (see Player.tsx's onLikelyTrailer).
+  const expectedRuntimeMinutes = parseRuntimeMinutes(meta.runtime) ?? undefined;
 
   return (
     <>
@@ -108,6 +113,7 @@ export default async function TitlePage({
               videoId={currentVideoId}
               playbackPrefs={config.playback}
               resumePositionSec={resumePositionSec}
+              expectedRuntimeMinutes={expectedRuntimeMinutes}
             />
           }
         />
