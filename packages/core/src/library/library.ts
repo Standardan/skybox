@@ -5,7 +5,7 @@
  * Persistence (IndexedDB, sync) is out of scope here — see the `sync` module.
  */
 
-import type { ImdbId, LibraryItem, LibraryState, MediaType, WatchProgress } from "../shared/types.js";
+import type { ImdbId, LastWorkingSource, LibraryItem, LibraryState, MediaType, WatchProgress } from "../shared/types.js";
 
 /** A title is considered fully watched once progress crosses this fraction. */
 const WATCHED_THRESHOLD = 0.9;
@@ -29,12 +29,19 @@ export function upsertProgress(
   progress: WatchProgress,
 ): LibraryItem[] {
   const state: LibraryState = isComplete(progress) ? "watched" : "watching";
-  const next: LibraryItem = { metaId, type, state, progress };
 
   const existingIndex = items.findIndex((item) => item.metaId === metaId);
   if (existingIndex === -1) {
-    return [...items, next];
+    return [...items, { metaId, type, state, progress }];
   }
+  // Spread the existing item first — this used to construct a wholly new
+  // object here, which silently wiped out any OTHER field a title's
+  // LibraryItem carried (lastWorkingSource, added later) every time
+  // progress was reported, which happens routinely during normal
+  // playback. Preserving unknown/other fields by default means a future
+  // field doesn't need every existing mutator function updated in
+  // lockstep just to avoid clobbering it.
+  const next: LibraryItem = { ...items[existingIndex]!, metaId, type, state, progress };
   return items.map((item, i) => (i === existingIndex ? next : item));
 }
 
@@ -43,12 +50,35 @@ export function upsertProgress(
  * completed watch has no meaningful resume position.
  */
 export function markWatched(items: LibraryItem[], metaId: ImdbId, type: MediaType): LibraryItem[] {
-  const next: LibraryItem = { metaId, type, state: "watched" };
-
   const existingIndex = items.findIndex((item) => item.metaId === metaId);
   if (existingIndex === -1) {
-    return [...items, next];
+    return [...items, { metaId, type, state: "watched" }];
   }
+  // Same preserve-other-fields reasoning as upsertProgress above —
+  // explicitly clears progress (a finished watch has no resume position)
+  // but a working source is still worth remembering for a rewatch.
+  const next: LibraryItem = { ...items[existingIndex]!, metaId, type, state: "watched", progress: undefined };
+  return items.map((item, i) => (i === existingIndex ? next : item));
+}
+
+/**
+ * Records the specific source (infoHash+fileIdx or url) that just
+ * successfully played for `videoId`, so a later visit can try that exact
+ * one first instead of starting the whole ranking/auto-retry over from
+ * scratch. Creates the item (as `watching`, mirroring upsertProgress)
+ * if none exists yet — this can fire before the first progress report.
+ */
+export function setLastWorkingSource(
+  items: LibraryItem[],
+  metaId: ImdbId,
+  type: MediaType,
+  source: LastWorkingSource,
+): LibraryItem[] {
+  const existingIndex = items.findIndex((item) => item.metaId === metaId);
+  if (existingIndex === -1) {
+    return [...items, { metaId, type, state: "watching", lastWorkingSource: source }];
+  }
+  const next: LibraryItem = { ...items[existingIndex]!, lastWorkingSource: source };
   return items.map((item, i) => (i === existingIndex ? next : item));
 }
 

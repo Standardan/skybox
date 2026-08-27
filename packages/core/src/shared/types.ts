@@ -386,11 +386,30 @@ export interface WatchProgress {
   updatedAt: number; // epoch ms
 }
 
+/**
+ * Real feature request: "if the movie is working for me right now...
+ * tomorrow I want to watch the same movie, it should first test the one
+ * I was watching successfully." Enough to re-find the SAME underlying
+ * torrent/source next time — the actual resolved playback URL (with its
+ * debrid token) is single-use/expires, but a magnet's infoHash+fileIdx
+ * (or a direct addon url) stays stable across separate `aggregateStreams`
+ * calls, since that's a property of the torrent/source itself, not of
+ * the query that found it.
+ */
+export interface LastWorkingSource {
+  /** Which episode/movie this was confirmed for — a series' other episodes may have entirely different sources. */
+  videoId: string;
+  infoHash?: string;
+  fileIdx?: number;
+  url?: string;
+}
+
 export interface LibraryItem {
   metaId: ImdbId;
   type: MediaType;
   state: LibraryState;
   progress?: WatchProgress;
+  lastWorkingSource?: LastWorkingSource;
 }
 
 // ---------------------------------------------------------------------------

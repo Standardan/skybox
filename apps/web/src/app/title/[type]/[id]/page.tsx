@@ -114,6 +114,7 @@ export default async function TitlePage({
               playbackPrefs={config.playback}
               resumePositionSec={resumePositionSec}
               expectedRuntimeMinutes={expectedRuntimeMinutes}
+              lastWorkingSource={libraryItem?.lastWorkingSource}
             />
           }
         />

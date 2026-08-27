@@ -50,6 +50,17 @@ export interface PlayerProps {
   /** Cinemeta's stated runtime in minutes — see onLikelyTrailer above. */
   expectedRuntimeMinutes?: number;
   /**
+   * Fires once per source, at most, once real playback has held for
+   * CONFIRMED_WORKING_THRESHOLD_SEC of actual video time (not wall-clock
+   * — pausing partway through, e.g. to check something, doesn't reset or
+   * delay this; only genuinely elapsed playback counts) with none of the
+   * other failure signals (audio silence, wrong runtime, a plain error
+   * event) having fired. The caller remembers this source so a later
+   * visit tries it first (B7-adjacent feature request: "if it's working
+   * right now, use that one first next time").
+   */
+  onConfirmedWorking?: () => void;
+  /**
    * Fires periodically (roughly every 15s, throttled) and on pause/unmount —
    * never on every timeupdate tick — so the caller can persist resume
    * position (B7). Omit in live-TV mode; there's nothing to "continue
@@ -61,6 +72,11 @@ export interface PlayerProps {
 }
 
 const AUTO_HIDE_MS = 3000;
+// Elapsed VIDEO time, not wall-clock — deliberately based on currentTime
+// rather than a setTimeout, so pausing partway through (a normal, real
+// user action, not a failure) never resets or delays this; only time
+// actually spent playing counts toward the threshold.
+const CONFIRMED_WORKING_THRESHOLD_SEC = 10;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds)) return "0:00";
@@ -88,6 +104,7 @@ export function Player({
   onNoAudioTrackDetected,
   onLikelyTrailer,
   expectedRuntimeMinutes,
+  onConfirmedWorking,
   onProgress,
   startPositionSec,
 }: PlayerProps) {
@@ -95,6 +112,7 @@ export function Player({
   const playerRef = useRef<HTMLDivElement>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasSeekedToStart = useRef(false);
+  const hasConfirmedWorking = useRef(false);
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -137,6 +155,7 @@ export function Player({
     // A genuinely new source (e.g. F6's "try next source" after a failure)
     // should still resume at the same spot — same title, different URL.
     hasSeekedToStart.current = false;
+    hasConfirmedWorking.current = false;
 
     let hls: import("hls.js").default | null = null;
 
@@ -429,7 +448,14 @@ export function Player({
             onProgress(currentTime, duration);
           }
         }}
-        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+        onTimeUpdate={(e) => {
+          const t = e.currentTarget.currentTime;
+          setCurrentTime(t);
+          if (onConfirmedWorking && !hasConfirmedWorking.current && t >= CONFIRMED_WORKING_THRESHOLD_SEC) {
+            hasConfirmedWorking.current = true;
+            onConfirmedWorking();
+          }
+        }}
         onDurationChange={(e) => setDuration(e.currentTarget.duration)}
         onLoadedMetadata={(e) => {
           if (hasSeekedToStart.current) return;

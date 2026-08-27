@@ -11,7 +11,7 @@ import {
   matchesPreferredLanguage,
   LANGUAGE_OPTIONS,
 } from "@skybox/core/addon-client";
-import type { MediaType, PlaybackPrefs, StremioStream } from "@skybox/core/shared";
+import type { LastWorkingSource, MediaType, PlaybackPrefs, StremioStream } from "@skybox/core/shared";
 import { Player, type PlayerSource } from "@/components/Player";
 import styles from "./PlaybackControls.module.css";
 
@@ -143,6 +143,39 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
   return { streams: filtered, languageFilterFellBack: false, compatibilityFilterFellBack };
 }
 
+/** Same identity a stream is deduped/persisted by elsewhere (infoHash+fileIdx, or url) — matching aggregateStreams' own dedupeKey logic. */
+function sourceIdentity(stream: Pick<StremioStream, "url" | "infoHash" | "fileIdx">): string | undefined {
+  if (stream.url) return `url:${stream.url}`;
+  if (stream.infoHash) return `hash:${stream.infoHash.toLowerCase()}:${stream.fileIdx ?? ""}`;
+  return undefined;
+}
+
+/**
+ * Real feature request: "if the movie is working for me right now...
+ * tomorrow I want to watch the same movie, it should first test the one
+ * I was watching successfully." Moves the confirmed-working source (see
+ * Player.tsx's onConfirmedWorking) to the very front — above every other
+ * ranking signal, since a source that's ACTUALLY been confirmed to play
+ * is strictly stronger evidence than any title-text heuristic. No-op
+ * (including when it simply isn't present in `streams` at all — e.g. the
+ * addon's catalog changed, or it got filtered by a since-changed
+ * language/compatibility preference) rather than trying to resurrect it
+ * from a different, unfiltered list.
+ */
+function prioritizeLastWorkingSource(
+  streams: StremioStream[],
+  lastWorkingSource: LastWorkingSource | undefined,
+  currentVideoId: string,
+): StremioStream[] {
+  if (!lastWorkingSource || lastWorkingSource.videoId !== currentVideoId) return streams;
+  const targetIdentity = sourceIdentity(lastWorkingSource);
+  if (!targetIdentity) return streams;
+  const matchIndex = streams.findIndex((stream) => sourceIdentity(stream) === targetIdentity);
+  if (matchIndex <= 0) return streams; // not found, or already first — nothing to do
+  const match = streams[matchIndex]!;
+  return [match, ...streams.slice(0, matchIndex), ...streams.slice(matchIndex + 1)];
+}
+
 function reportProgress(metaId: string, type: MediaType, videoId: string, positionSec: number, durationSec: number) {
   // Best-effort — a failed progress ping shouldn't interrupt playback, and
   // there's nothing useful to show the user for it.
@@ -228,6 +261,7 @@ export function PlaybackControls({
   playbackPrefs,
   resumePositionSec,
   expectedRuntimeMinutes,
+  lastWorkingSource,
 }: {
   streams: StremioStream[];
   hasAddons: boolean;
@@ -243,6 +277,8 @@ export function PlaybackControls({
   resumePositionSec?: number;
   /** Cinemeta's stated runtime in minutes, if known — used to catch a resolved source that's actually just a trailer (see Player.tsx's onLikelyTrailer). */
   expectedRuntimeMinutes?: number;
+  /** The source that last actually played for this videoId, if any — tried first (see prioritizeLastWorkingSource). */
+  lastWorkingSource?: LastWorkingSource;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [resolvingIndex, setResolvingIndex] = useState<number | null>(null);
@@ -278,10 +314,10 @@ export function PlaybackControls({
   // back open on its next failure regardless.
   const abortRef = useRef<AbortController | null>(null);
 
-  const { streams, languageFilterFellBack, compatibilityFilterFellBack } = useMemo(
-    () => applyPlaybackPrefs(rawStreams, playbackPrefs),
-    [rawStreams, playbackPrefs],
-  );
+  const { streams, languageFilterFellBack, compatibilityFilterFellBack } = useMemo(() => {
+    const result = applyPlaybackPrefs(rawStreams, playbackPrefs);
+    return { ...result, streams: prioritizeLastWorkingSource(result.streams, lastWorkingSource, videoId) };
+  }, [rawStreams, playbackPrefs, lastWorkingSource, videoId]);
   // Computed once per mount (the answer can't change mid-session) — gates
   // the HEVC warning below so a viewer whose browser actually plays HEVC
   // fine (Chrome/Edge/Safari, mostly) never sees it.
@@ -381,6 +417,31 @@ export function PlaybackControls({
     setTrailerSkipped(true);
     handleSourceFailed();
   }, [handleSourceFailed]);
+
+  /**
+   * Fires once real playback has held for CONFIRMED_WORKING_THRESHOLD_SEC
+   * (see Player.tsx) — remembers this exact source so a later visit to
+   * this title tries it first (see prioritizeLastWorkingSource above).
+   * Best-effort like reportProgress below: losing this write just means
+   * next time falls back to normal ranking, not a broken experience.
+   */
+  const handleConfirmedWorking = useCallback(() => {
+    const stream = playingIndex !== null ? streams[playingIndex] : undefined;
+    if (!stream) return;
+    void fetch("/api/library/source", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        metaId,
+        type: mediaType,
+        videoId,
+        infoHash: stream.infoHash,
+        fileIdx: stream.fileIdx,
+        url: stream.url,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [playingIndex, streams, metaId, mediaType, videoId]);
 
   if (!hasAddons) {
     return (
@@ -535,6 +596,7 @@ export function PlaybackControls({
               onNoAudioTrackDetected={() => setNoAudioTrackDetected(true)}
               onLikelyTrailer={handleLikelyTrailer}
               expectedRuntimeMinutes={expectedRuntimeMinutes}
+              onConfirmedWorking={handleConfirmedWorking}
               onProgress={(positionSec, durationSec) =>
                 reportProgress(metaId, mediaType, videoId, positionSec, durationSec)
               }

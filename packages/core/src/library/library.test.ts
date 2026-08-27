@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { LibraryItem, WatchProgress } from "../shared/types.js";
+import type { LastWorkingSource, LibraryItem, WatchProgress } from "../shared/types.js";
 import {
   addToWatchlist,
   findItem,
@@ -9,6 +9,7 @@ import {
   markUnwatched,
   markWatched,
   removeFromWatchlist,
+  setLastWorkingSource,
   upsertProgress,
 } from "./library.js";
 
@@ -92,6 +93,17 @@ describe("upsertProgress", () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toBe(other);
   });
+
+  it("preserves an existing lastWorkingSource — a real bug this guards against: this used to construct a wholly new item, silently wiping any field it didn't itself know about", () => {
+    const source: LastWorkingSource = { videoId: "vid-1", infoHash: "abc123", fileIdx: 0 };
+    const items: LibraryItem[] = [
+      { metaId: "tt0000001", type: "movie", state: "watching", lastWorkingSource: source },
+    ];
+
+    const result = upsertProgress(items, "tt0000001", "movie", progress());
+
+    expect(result[0]!.lastWorkingSource).toEqual(source);
+  });
 });
 
 describe("markWatched", () => {
@@ -118,6 +130,58 @@ describe("markWatched", () => {
     expect(result[0]!.progress).toBeUndefined();
     expect(items[0]).toBe(original);
     expect(items[0]!.progress).toEqual(progress());
+  });
+
+  it("preserves an existing lastWorkingSource even though progress is cleared — a finished movie's working source is still worth remembering for a rewatch", () => {
+    const source: LastWorkingSource = { videoId: "vid-1", url: "https://example.com/stream" };
+    const items: LibraryItem[] = [
+      { metaId: "tt0000001", type: "movie", state: "watching", progress: progress(), lastWorkingSource: source },
+    ];
+
+    const result = markWatched(items, "tt0000001", "movie");
+
+    expect(result[0]!.lastWorkingSource).toEqual(source);
+    expect(result[0]!.progress).toBeUndefined();
+  });
+});
+
+describe("setLastWorkingSource", () => {
+  it("creates a new 'watching' item for a brand-new metaId", () => {
+    const items: LibraryItem[] = [];
+    const source: LastWorkingSource = { videoId: "tt0000001", infoHash: "abc123", fileIdx: 2 };
+
+    const result = setLastWorkingSource(items, "tt0000001", "movie", source);
+
+    expect(result).toEqual([{ metaId: "tt0000001", type: "movie", state: "watching", lastWorkingSource: source }]);
+    expect(items).toEqual([]);
+  });
+
+  it("updates an existing item's lastWorkingSource while preserving its other fields", () => {
+    const original: LibraryItem = {
+      metaId: "tt0000001",
+      type: "movie",
+      state: "watched",
+      progress: progress(),
+      lastWorkingSource: { videoId: "tt0000001", url: "https://old.example/stream" },
+    };
+    const items = [original];
+    const newSource: LastWorkingSource = { videoId: "tt0000001", infoHash: "def456", fileIdx: 1 };
+
+    const result = setLastWorkingSource(items, "tt0000001", "movie", newSource);
+
+    expect(result[0]).toEqual({ ...original, lastWorkingSource: newSource });
+    // input untouched
+    expect(items[0]).toBe(original);
+  });
+
+  it("does not mutate other items in the array", () => {
+    const other: LibraryItem = { metaId: "tt9999999", type: "series", state: "watchlist" };
+    const items = [other];
+
+    const result = setLastWorkingSource(items, "tt0000001", "movie", { videoId: "tt0000001", infoHash: "abc" });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBe(other);
   });
 });
 
