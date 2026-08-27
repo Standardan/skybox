@@ -69,6 +69,8 @@ export interface PlayerProps {
   onProgress?: (positionSec: number, durationSec: number) => void;
   /** Seeks here once playback metadata loads — the other half of "resume where you left off" (B7). Omit to start at 0. */
   startPositionSec?: number;
+  /** Fires once the video reaches its natural end (not on a failure/skip) — lets the caller offer a "Next Episode" prompt. */
+  onEnded?: () => void;
 }
 
 const AUTO_HIDE_MS = 3000;
@@ -107,6 +109,7 @@ export function Player({
   onConfirmedWorking,
   onProgress,
   startPositionSec,
+  onEnded,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerRef = useRef<HTMLDivElement>(null);
@@ -477,6 +480,7 @@ export function Player({
           }
         }}
         onVolumeChange={(e) => setVolume(e.currentTarget.volume)}
+        onEnded={() => onEnded?.()}
         onError={() => handleFailure()}
         onClick={togglePlay}
       />

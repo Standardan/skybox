@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { racePool } from "@skybox/core/shared";
 import {
   isCached,
   detectResolution,
@@ -224,6 +226,76 @@ function reportProgress(metaId: string, type: MediaType, videoId: string, positi
   }).catch(() => {});
 }
 
+/**
+ * Real feature request: "so much time between episodes that I have to sit
+ * here and wait for one [source] to work." A background prefetch (see
+ * resolveNextEpisodePrefetch below) resolves the next episode's source
+ * WHILE the current one is still playing, then stashes the result here so
+ * the next episode's PlaybackControls instance (a fresh remount — episode
+ * navigation is a full page nav, not a prop update) can pick it up on
+ * mount instead of re-resolving from scratch.
+ *
+ * sessionStorage, not localStorage: the cached value is a live, single-
+ * use debrid-CDN URL (same reason resolve-stream/route.ts's own
+ * redactedUrlForLogging goes out of its way to never log one verbatim) —
+ * tab-scoped storage that self-clears on tab close is the safer fit than
+ * something that would persist across the whole browser profile.
+ * LastWorkingSource (packages/core/src/shared/types.ts) is deliberately
+ * NOT reused for this: its own doc comment states the resolved URL "is
+ * single-use/expires," which is exactly why that type only ever persists
+ * source IDENTITY, never a resolved URL — reusing it here would violate
+ * that invariant.
+ */
+const PREFETCH_FRESHNESS_MS = 5 * 60 * 1000;
+
+interface PrefetchedNextEpisode {
+  url: string;
+  filename: string | null;
+  remuxed: boolean;
+  resolvedAt: number;
+  /** The winning candidate's identity (see sourceIdentity() below) — lets the next episode's fresh streams array find the matching row for playingIndex, without needing to persist the resolved URL's own identity (it has none independent of the original stream). */
+  sourceIdentity?: string;
+}
+
+function prefetchCacheKey(metaId: string, videoId: string): string {
+  return `skybox:prefetch:${metaId}:${videoId}`;
+}
+
+function writePrefetchCache(
+  metaId: string,
+  videoId: string,
+  entry: Omit<PrefetchedNextEpisode, "resolvedAt">,
+): void {
+  try {
+    sessionStorage.setItem(
+      prefetchCacheKey(metaId, videoId),
+      JSON.stringify({ ...entry, resolvedAt: Date.now() } satisfies PrefetchedNextEpisode),
+    );
+  } catch {
+    // Private browsing / storage disabled — prefetch just silently doesn't help this time.
+  }
+}
+
+/**
+ * One-shot: consumes (reads + clears) a fresh prefetch entry, or returns
+ * null on a miss/stale-entry/storage-unavailable. Callers must always
+ * have a normal-resolve fallback for the null case — this is a best-
+ * effort speed-up, never the only path to playback.
+ */
+function consumePrefetchCache(metaId: string, videoId: string): PrefetchedNextEpisode | null {
+  try {
+    const key = prefetchCacheKey(metaId, videoId);
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    sessionStorage.removeItem(key);
+    const entry = JSON.parse(raw) as PrefetchedNextEpisode;
+    if (Date.now() - entry.resolvedAt > PREFETCH_FRESHNESS_MS) return null;
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
 interface ResolveResponse {
   ok: boolean;
   playableUrl?: string;
@@ -255,6 +327,33 @@ interface ResolveResponse {
  * time — most legitimate resolves finish in well under this regardless.
  */
 const RESOLVE_TIMEOUT_MS = 45_000;
+
+/**
+ * How many ranked candidates playIndex races at once via racePool, instead
+ * of trying them strictly one at a time. Real report this fixes: waiting
+ * "several minutes" for a working source when the first few ranked ones
+ * were each slow to fail. Kept deliberately small (not the whole list at
+ * once) — nothing in this app's debrid layer rate-limits requests today
+ * except this very concurrency cap (see resolve-stream/route.ts's
+ * `retryable` doc comment for the real rate-limit incident that shaped
+ * that), so this is a reasoned starting point to tune from real usage,
+ * not a measured optimum.
+ */
+const RESOLVE_POOL_CONCURRENCY = 2;
+
+/**
+ * How close to the end of the CURRENT episode (in seconds remaining) the
+ * background next-episode prefetch waits before actually resolving a
+ * source (see resolveNextEpisodePrefetch). The resolved link is real,
+ * single-use, and expires — resolving too early risks it being dead by
+ * the time the user actually reaches the next episode; too late and it
+ * isn't ready when they click. The exact debrid link TTL isn't documented
+ * anywhere in this codebase, so this is a reasoned default (late enough
+ * to likely still be fresh, early enough to have finished well before
+ * RESOLVE_TIMEOUT_MS would matter) rather than a measured number — worth
+ * revisiting from real usage.
+ */
+const NEAR_END_THRESHOLD_SEC = 180;
 
 async function resolveStream(stream: StremioStream, signal: AbortSignal): Promise<ResolveResponse> {
   const res = await fetch("/api/resolve-stream", {
@@ -303,6 +402,9 @@ export function PlaybackControls({
   resumePositionSec,
   expectedRuntimeMinutes,
   lastWorkingSource,
+  nextVideoId,
+  nextEpisodeLabel,
+  autoPlayOnMount,
 }: {
   streams: StremioStream[];
   hasAddons: boolean;
@@ -320,9 +422,17 @@ export function PlaybackControls({
   expectedRuntimeMinutes?: number;
   /** The source that last actually played for this videoId, if any — tried first (see prioritizeLastWorkingSource). */
   lastWorkingSource?: LastWorkingSource;
+  /** The next episode's videoId, if this is a series and one exists — drives background prefetch + the "Next Episode" prompt. Undefined for a movie or the last episode. */
+  nextVideoId?: string;
+  nextEpisodeLabel?: string;
+  /** True when this page was reached via a "Next Episode" click (see the ?autoplay=1 handoff) — triggers an immediate play attempt on mount, using a fresh background-prefetched source if one's ready. */
+  autoPlayOnMount?: boolean;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [resolvingIndex, setResolvingIndex] = useState<number | null>(null);
+  // A Set, not a single index — playIndex now races several candidates
+  // concurrently (see racePool) rather than trying them strictly one at a
+  // time, so more than one row can legitimately be "Resolving…" at once.
+  const [resolvingIndices, setResolvingIndices] = useState<ReadonlySet<number>>(new Set());
   const [resolveError, setResolveError] = useState<string | null>(null);
   const [playerSource, setPlayerSource] = useState<PlayerSource | null>(null);
   const [playingIndex, setPlayingIndex] = useState<number | null>(null);
@@ -354,6 +464,16 @@ export function PlaybackControls({
   // sources panel only hid it visually and the loop would just force it
   // back open on its next failure regardless.
   const abortRef = useRef<AbortController | null>(null);
+  // Separate from abortRef: the background next-episode prefetch (see
+  // resolveNextEpisodePrefetch) is a best-effort task independent of the
+  // CURRENT episode's own playback/retry lifecycle — it shouldn't be
+  // cancelled by e.g. picking a different source for this episode, only
+  // by actually leaving this page.
+  const prefetchAbortRef = useRef<AbortController | null>(null);
+  const nextEpisodeCandidatesRef = useRef<Promise<StremioStream[]> | null>(null);
+  const hasTriggeredPrefetchResolve = useRef(false);
+  const [showNextEpisodePrompt, setShowNextEpisodePrompt] = useState(false);
+  const router = useRouter();
 
   const { streams, languageFilterFellBack, compatibilityFilterFellBack } = useMemo(() => {
     const result = applyPlaybackPrefs(rawStreams, playbackPrefs);
@@ -377,13 +497,23 @@ export function PlaybackControls({
    * *playback* failure already does via handleSourceFailed below, and only
    * surfaces an error once every remaining source has also failed.
    *
-   * Stops immediately instead of exhausting the whole list when the server
+   * Stops launching NEW resolves (in-flight ones are left to finish — one
+   * can still win) instead of exhausting the whole list when the server
    * marks a failure `retryable: false` (a connection-level failure that
-   * never reached the debrid provider at all, e.g. a reset connection) —
-   * every other source resolves through that exact same provider host and
-   * would fail identically, so grinding through the rest is both pointless
-   * and, worse, the actual cause of a real report: it read as "stuck
-   * trying to resolve every source" with no way to tell it wasn't.
+   * never reached the debrid provider at all, e.g. a reset connection, or
+   * an account-wide rate limit) — every other source resolves through
+   * that exact same provider host and would fail identically, so
+   * grinding through the rest is both pointless and, worse, the actual
+   * cause of a real report: it read as "stuck trying to resolve every
+   * source" with no way to tell it wasn't.
+   *
+   * Real report this races instead of walking sequentially for: waiting
+   * "several minutes" for a working source, because each candidate was
+   * tried fully (up to RESOLVE_TIMEOUT_MS) before the next one even
+   * started. RESOLVE_POOL_CONCURRENCY candidates now race at once via
+   * racePool — first success wins, siblings are cancelled. See
+   * resolve-pool.ts's own doc comment for why this still respects
+   * `retryable: false` as a hard stop on NEW dispatches, not just noise.
    */
   const playIndex = useCallback(
     async (startIndex: number) => {
@@ -391,47 +521,75 @@ export function PlaybackControls({
       const controller = new AbortController();
       abortRef.current = controller;
 
-      let lastMessage = "Failed to resolve this source.";
-      for (let index = startIndex; index < streams.length; index++) {
-        if (controller.signal.aborted) return;
-        const stream = streams[index];
-        if (!stream) continue;
-        if (index > startIndex) setSourcesOpen(true);
-        setResolvingIndex(index);
-        setResolveError(null);
-        try {
-          const result = await resolveStream(stream, controller.signal);
-          if (controller.signal.aborted) return;
-          if (result.ok && result.playableUrl) {
-            setPlayerSource({ url: result.playableUrl, format: "native" });
-            setPlayingIndex(index);
-            setPlayingFilename(result.filename ?? null);
-            setPlayingRemuxed(result.remuxed ?? false);
-            setNoAudioTrackDetected(false);
-            setResolvingIndex(null);
-            return;
+      setResolveError(null);
+      const candidates = streams.slice(startIndex);
+      const { winner, lastFailure } = await racePool<StremioStream, ResolveResponse>({
+        candidates,
+        concurrency: RESOLVE_POOL_CONCURRENCY,
+        signal: controller.signal,
+        resolveOne: async (stream, _i, signal) => {
+          try {
+            return await resolveStream(stream, signal);
+          } catch {
+            // A thrown/aborted fetch is treated the same as today's
+            // sequential loop treated it: retryable, not a hard stop —
+            // only an explicit `retryable: false` from the server halts
+            // new dispatches.
+            return { ok: false, message: "Failed to resolve this source. Check your connection and try again." };
           }
-          lastMessage = result.message ?? lastMessage;
-          if (result.retryable === false) break;
-        } catch {
-          if (controller.signal.aborted) return;
-          lastMessage = "Failed to resolve this source. Check your connection and try again.";
-        }
-      }
+        },
+        isSuccess: (r) => r.ok && !!r.playableUrl,
+        isRetryable: (r) => r.retryable !== false,
+        onAttemptStart: (i) => {
+          const index = startIndex + i;
+          setResolvingIndices((prev) => new Set(prev).add(index));
+        },
+        onAttemptSettled: (i, result) => {
+          const index = startIndex + i;
+          setResolvingIndices((prev) => {
+            const next = new Set(prev);
+            next.delete(index);
+            return next;
+          });
+          if (!result.ok) setSourcesOpen(true);
+        },
+      });
+
       if (controller.signal.aborted) return;
-      setResolvingIndex(null);
-      setResolveError(lastMessage);
+      if (winner) {
+        const index = startIndex + winner.index;
+        const result = winner.result;
+        setPlayerSource({ url: result.playableUrl!, format: "native" });
+        setPlayingIndex(index);
+        setPlayingFilename(result.filename ?? null);
+        setPlayingRemuxed(result.remuxed ?? false);
+        setNoAudioTrackDetected(false);
+        setResolvingIndices(new Set());
+        return;
+      }
+      setResolvingIndices(new Set());
+      setResolveError(lastFailure?.message ?? "Failed to resolve this source.");
       setSourcesOpen(true);
     },
     [streams],
   );
 
-  /** Cancels any in-flight resolve/retry loop immediately (aborts the network request too, not just future attempts) and closes the panel. */
+  /** Cancels any in-flight resolve/retry pool immediately (aborts the network requests too, not just future attempts) and closes the panel. */
   const stopResolving = useCallback(() => {
     abortRef.current?.abort();
-    setResolvingIndex(null);
+    setResolvingIndices(new Set());
     setResolveError(null);
     setSourcesOpen(false);
+  }, []);
+
+  // No unmount cleanup existed before this — a stuck/slow resolve just
+  // kept running invisibly. More important now that a pool run can have
+  // RESOLVE_POOL_CONCURRENCY concurrent fetches in flight, not just one.
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+      prefetchAbortRef.current?.abort();
+    };
   }, []);
 
   const handleSourceFailed = useCallback(() => {
@@ -463,13 +621,95 @@ export function PlaybackControls({
   }, [handleSourceFailed]);
 
   /**
+   * Phase 1 of the next-episode prefetch — cheap, safe to start early.
+   * Just the addon candidate list for nextVideoId, not a resolved/token-
+   * bound link yet, so there's no downside to fetching it well before
+   * it's actually needed. Cached in a ref so this and
+   * resolveNextEpisodePrefetch below (which also calls this, in case a
+   * very short episode reaches "near the end" before playback is even
+   * confirmed working) share one in-flight request instead of two.
+   */
+  const prefetchNextEpisodeStreams = useCallback((): Promise<StremioStream[]> => {
+    if (!nextEpisodeCandidatesRef.current) {
+      nextEpisodeCandidatesRef.current = nextVideoId
+        ? fetch(`/api/streams?type=${mediaType}&id=${encodeURIComponent(nextVideoId)}`)
+            .then((res) => res.json())
+            .then((data: { streams?: StremioStream[] }) => data.streams ?? [])
+            .catch(() => [])
+        : Promise.resolve([]);
+    }
+    return nextEpisodeCandidatesRef.current;
+  }, [nextVideoId, mediaType]);
+
+  /**
+   * Phase 2 — expensive and, unlike the candidate list above, genuinely
+   * expiring (see PREFETCH_FRESHNESS_MS's doc comment). Fired once, near
+   * the end of the CURRENT episode (see the onProgress wiring below), so
+   * the resolved link is as fresh as possible when the user actually
+   * reaches the next episode. Races the top 2 ranked candidates through
+   * the same racePool live playback uses, then stashes a winner in
+   * sessionStorage for the next episode's PlaybackControls instance (a
+   * fresh remount — see writePrefetchCache's doc comment) to pick up on
+   * mount. Best-effort throughout: any failure here just means the next
+   * episode falls back to a normal resolve, same as today.
+   */
+  const resolveNextEpisodePrefetch = useCallback(async () => {
+    if (!nextVideoId) return;
+    const candidates = await prefetchNextEpisodeStreams();
+    if (candidates.length === 0) return;
+
+    prefetchAbortRef.current?.abort();
+    const controller = new AbortController();
+    prefetchAbortRef.current = controller;
+
+    const ranked = applyPlaybackPrefs(candidates, playbackPrefs).streams.slice(0, 2);
+    const { winner } = await racePool<StremioStream, ResolveResponse>({
+      candidates: ranked,
+      concurrency: 2,
+      signal: controller.signal,
+      resolveOne: async (stream, _i, signal) => {
+        try {
+          return await resolveStream(stream, signal);
+        } catch {
+          return { ok: false };
+        }
+      },
+      isSuccess: (r) => r.ok && !!r.playableUrl,
+      // Still respects the same rate-limit signal live playback does —
+      // this is best-effort, not urgent, but it's real traffic against
+      // the same debrid account, so it must back off exactly like the
+      // foreground pool does, not just because nothing's "waiting" on it.
+      isRetryable: (r) => r.retryable !== false,
+    });
+
+    if (controller.signal.aborted) return;
+    const winningStream = winner ? ranked[winner.index] : undefined;
+    if (winner?.result.playableUrl && winningStream) {
+      writePrefetchCache(metaId, nextVideoId, {
+        url: winner.result.playableUrl,
+        filename: winner.result.filename ?? null,
+        remuxed: winner.result.remuxed ?? false,
+        sourceIdentity: sourceIdentity(winningStream),
+      });
+    }
+  }, [nextVideoId, prefetchNextEpisodeStreams, playbackPrefs, metaId]);
+
+  const handleNextEpisode = useCallback(() => {
+    if (!nextVideoId) return;
+    router.push(`/title/${mediaType}/${metaId}?video=${encodeURIComponent(nextVideoId)}&autoplay=1`);
+  }, [router, mediaType, metaId, nextVideoId]);
+
+  /**
    * Fires once real playback has held for CONFIRMED_WORKING_THRESHOLD_SEC
    * (see Player.tsx) — remembers this exact source so a later visit to
-   * this title tries it first (see prioritizeLastWorkingSource above).
-   * Best-effort like reportProgress below: losing this write just means
-   * next time falls back to normal ranking, not a broken experience.
+   * this title tries it first (see prioritizeLastWorkingSource above),
+   * and (real feature request: "so much time between episodes...")
+   * kicks off Phase 1 of the next-episode prefetch. Best-effort like
+   * reportProgress below: losing either write just means next time falls
+   * back to normal behavior, not a broken experience.
    */
   const handleConfirmedWorking = useCallback(() => {
+    if (nextVideoId) void prefetchNextEpisodeStreams();
     const stream = playingIndex !== null ? streams[playingIndex] : undefined;
     if (!stream) return;
     void fetch("/api/library/source", {
@@ -485,7 +725,35 @@ export function PlaybackControls({
       }),
       keepalive: true,
     }).catch(() => {});
-  }, [playingIndex, streams, metaId, mediaType, videoId]);
+  }, [playingIndex, streams, metaId, mediaType, videoId, nextVideoId, prefetchNextEpisodeStreams]);
+
+  // Runs once per mount only — PlaybackControls remounts fresh on every
+  // episode navigation (full page nav, no `key` prop, fresh server
+  // props), so there's no "videoId changed under me" case to react to.
+  useEffect(() => {
+    if (!autoPlayOnMount) return;
+    const cached = consumePrefetchCache(metaId, videoId);
+    if (cached) {
+      const matchIndex = cached.sourceIdentity
+        ? streams.findIndex((s) => sourceIdentity(s) === cached.sourceIdentity)
+        : -1;
+      setPlayerSource({ url: cached.url, format: "native" });
+      setPlayingIndex(matchIndex >= 0 ? matchIndex : null);
+      setPlayingFilename(cached.filename);
+      setPlayingRemuxed(cached.remuxed);
+      setNoAudioTrackDetected(false);
+    } else {
+      // No fresh prefetch (didn't finish in time, or this is the first
+      // episode with nothing to have prefetched) — falls back to the
+      // exact same one-click resolve the manual "Play" button triggers,
+      // so a Next Episode click is never worse than today, only
+      // sometimes instant.
+      void playIndex(0);
+    }
+    // Strips ?autoplay=1 so a manual refresh doesn't replay auto-play.
+    router.replace(`/title/${mediaType}/${metaId}?video=${encodeURIComponent(videoId)}`, { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!hasAddons) {
     return (
@@ -506,17 +774,17 @@ export function PlaybackControls({
           type="button"
           className={styles.primary}
           onClick={() => void playIndex(0)}
-          disabled={resolvingIndex !== null}
+          disabled={resolvingIndices.size > 0}
         >
-          {resolvingIndex !== null ? "Resolving…" : "Play"}
+          {resolvingIndices.size > 0 ? "Resolving…" : "Play"}
         </button>
         <button
           type="button"
           className={styles.secondary}
-          onClick={() => (resolvingIndex !== null ? stopResolving() : setSourcesOpen((open) => !open))}
+          onClick={() => (resolvingIndices.size > 0 ? stopResolving() : setSourcesOpen((open) => !open))}
           aria-expanded={sourcesOpen}
         >
-          {resolvingIndex !== null ? "Stop" : sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
+          {resolvingIndices.size > 0 ? "Stop" : sourcesOpen ? "Hide sources" : `All sources (${streams.length})`}
         </button>
       </div>
 
@@ -554,7 +822,7 @@ export function PlaybackControls({
         <div className={styles.sourcesOverlay} onClick={stopResolving}>
           <div className={styles.sourcesPanel} onClick={(e) => e.stopPropagation()}>
             <div className={styles.sourcesPanelHeader}>
-              {resolvingIndex !== null ? (
+              {resolvingIndices.size > 0 ? (
                 <span className={styles.sourceText}>Trying sources…</span>
               ) : (
                 <span />
@@ -588,9 +856,9 @@ export function PlaybackControls({
                     type="button"
                     className={styles.sourcePlay}
                     onClick={() => void playIndex(index)}
-                    disabled={resolvingIndex !== null}
+                    disabled={resolvingIndices.size > 0}
                   >
-                    {resolvingIndex === index ? "Resolving…" : "Play"}
+                    {resolvingIndices.has(index) ? "Resolving…" : "Play"}
                   </button>
                 </li>
               ))}
@@ -643,6 +911,16 @@ export function PlaybackControls({
                 conversion — the video itself is fine. Try a different source from &ldquo;All sources&rdquo;.
               </p>
             )}
+            {showNextEpisodePrompt && nextVideoId && (
+              <div className={styles.nextEpisodePrompt} role="status">
+                <span className={styles.sourceText}>
+                  {nextEpisodeLabel ? `Up next: ${nextEpisodeLabel}` : "Up next"}
+                </span>
+                <button type="button" className={styles.primary} onClick={handleNextEpisode}>
+                  Next Episode
+                </button>
+              </div>
+            )}
             <Player
               source={playerSource}
               title={title}
@@ -653,10 +931,20 @@ export function PlaybackControls({
               onLikelyTrailer={handleLikelyTrailer}
               expectedRuntimeMinutes={expectedRuntimeMinutes}
               onConfirmedWorking={handleConfirmedWorking}
-              onProgress={(positionSec, durationSec) =>
-                reportProgress(metaId, mediaType, videoId, positionSec, durationSec)
-              }
+              onProgress={(positionSec, durationSec) => {
+                reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
+                if (
+                  !hasTriggeredPrefetchResolve.current &&
+                  nextVideoId &&
+                  durationSec > 0 &&
+                  durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
+                ) {
+                  hasTriggeredPrefetchResolve.current = true;
+                  void resolveNextEpisodePrefetch();
+                }
+              }}
               startPositionSec={resumePositionSec}
+              onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
             />
           </div>
         </div>

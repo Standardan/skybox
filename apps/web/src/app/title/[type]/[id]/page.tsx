@@ -19,12 +19,30 @@ import styles from "./title.module.css";
 // isn't meaningful here anyway).
 export const dynamic = "force-dynamic";
 
-/** First regular episode (season >= 1) in season/episode order, else the first video at all. */
-function pickDefaultVideoId(videos: StremioVideo[]): string | undefined {
-  const regular = videos
+function sortedRegularEpisodes(videos: StremioVideo[]): StremioVideo[] {
+  return videos
     .filter((video) => (video.season ?? 0) >= 1)
     .sort((a, b) => (a.season ?? 0) - (b.season ?? 0) || (a.episode ?? 0) - (b.episode ?? 0));
+}
+
+/** First regular episode (season >= 1) in season/episode order, else the first video at all. */
+function pickDefaultVideoId(videos: StremioVideo[]): string | undefined {
+  const regular = sortedRegularEpisodes(videos);
   return (regular[0] ?? videos[0])?.id;
+}
+
+/**
+ * The episode strictly after `currentVideoId` in season/episode order, or
+ * undefined at the last episode (or if `currentVideoId` isn't a regular
+ * episode at all). Used only to power background prefetch + a "Next
+ * Episode" prompt — real feature request: "so much time between episodes
+ * that I have to sit here and wait for one [source] to work."
+ */
+function findNextEpisode(videos: StremioVideo[], currentVideoId: string): StremioVideo | undefined {
+  const regular = sortedRegularEpisodes(videos);
+  const currentIndex = regular.findIndex((v) => v.id === currentVideoId);
+  if (currentIndex === -1 || currentIndex === regular.length - 1) return undefined;
+  return regular[currentIndex + 1];
 }
 
 export default async function TitlePage({
@@ -32,10 +50,10 @@ export default async function TitlePage({
   searchParams,
 }: {
   params: Promise<{ type: string; id: string }>;
-  searchParams: Promise<{ video?: string }>;
+  searchParams: Promise<{ video?: string; autoplay?: string }>;
 }) {
   const { type, id } = await params;
-  const { video } = await searchParams;
+  const { video, autoplay } = await searchParams;
 
   const user = await getCurrentUser();
   if (!user) redirect("/login");
@@ -86,6 +104,7 @@ export default async function TitlePage({
     .join(" · ");
 
   const currentEpisode = isSeries ? meta.videos!.find((v) => v.id === currentVideoId) : undefined;
+  const nextEpisode = isSeries ? findNextEpisode(meta.videos!, currentVideoId) : undefined;
   const playerTitle =
     isSeries && currentEpisode?.title ? `${meta.name} · ${currentEpisode.title}` : meta.name;
   // Cinemeta's runtime applies per-episode for a series too, not just
@@ -115,6 +134,9 @@ export default async function TitlePage({
               resumePositionSec={resumePositionSec}
               expectedRuntimeMinutes={expectedRuntimeMinutes}
               lastWorkingSource={libraryItem?.lastWorkingSource}
+              nextVideoId={nextEpisode?.id}
+              nextEpisodeLabel={nextEpisode?.title || (nextEpisode ? `Episode ${nextEpisode.episode ?? ""}` : undefined)}
+              autoPlayOnMount={autoplay === "1"}
             />
           }
         />
