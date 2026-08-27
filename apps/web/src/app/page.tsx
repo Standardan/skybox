@@ -4,12 +4,11 @@ import type { AddonRef, Game } from "@skybox/core/shared";
 import { formatClockTime } from "@skybox/core/shared";
 import { TopNav } from "@/components/TopNav";
 import { TimezoneAutoDetect } from "@/components/TimezoneAutoDetect";
-import { Hero } from "@/components/Hero";
 import { Rail } from "@/components/Rail";
 import { MediaCard, type MediaCardGame } from "@/components/MediaCard";
 import { PosterCardLink } from "@/components/PosterCardLink";
 import { getCinemetaAddon, getCachedCatalog, getCachedMeta } from "@/lib/addon-server";
-import { cinemetaPosterUrl, cinemetaBackgroundUrl } from "@/lib/cinemeta";
+import { cinemetaPosterUrl } from "@/lib/cinemeta";
 import { getTodaysMatchedGames } from "@/lib/sports-server";
 import { getIptvSnapshot } from "@/lib/iptv-server";
 import { readConfig } from "@/lib/config-store";
@@ -126,8 +125,6 @@ export default async function HomePage() {
     loadContinueWatching(cinemeta, user.id),
   ]);
 
-  const featured = popularMovies[0];
-
   // D8: sports off, no leagues followed, or nothing scheduled today — the
   // rail is simply absent, not an empty-state block competing with the
   // rest of Home.
@@ -145,18 +142,6 @@ export default async function HomePage() {
       <TimezoneAutoDetect currentTimezone={config.ui.timezone} />
       <TopNav />
       <main>
-        {featured && (
-          <Hero
-            data={{
-              title: featured.name,
-              synopsis: featured.description ?? "",
-              posterUrl: cinemetaPosterUrl(featured.id),
-              backdropUrl: featured.background ?? cinemetaBackgroundUrl(featured.id),
-              href: `/title/movie/${featured.id}`,
-            }}
-          />
-        )}
-
         {todaysGames.length > 0 && (
           <Rail title="Today's Games">
             {todaysGames.map((game) => (
