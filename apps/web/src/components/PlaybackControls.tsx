@@ -365,13 +365,25 @@ const RESOLVE_POOL_CONCURRENCY = 2;
  * source (see resolveNextEpisodePrefetch). The resolved link is real,
  * single-use, and expires — resolving too early risks it being dead by
  * the time the user actually reaches the next episode; too late and it
- * isn't ready when they click. The exact debrid link TTL isn't documented
- * anywhere in this codebase, so this is a reasoned default (late enough
- * to likely still be fresh, early enough to have finished well before
- * RESOLVE_TIMEOUT_MS would matter) rather than a measured number — worth
- * revisiting from real usage.
+ * isn't ready when they click.
+ *
+ * Real report this was shrunk for (from an original 180s): "I was
+ * successfully watching this episode... and then all of a sudden I got
+ * the testing sources screen and it put the episode back to the
+ * beginning." The server log showed the CURRENTLY-PLAYING episode's
+ * source getting re-resolved and re-attached mid-session, right around
+ * when the next-episode prefetch's real debrid-provider resolve calls
+ * were also firing in the background — a 3-minute overlap window is a
+ * long time for that background activity to potentially compete with or
+ * disrupt an actively-streaming connection to the same provider. 30s
+ * keeps the same two benefits (a head start before the user clicks Next,
+ * and a fresher link than resolving too early) while drastically
+ * shrinking that overlap window — normally more than enough lead time,
+ * since a working resolve typically completes in a few seconds. The
+ * exact debrid link TTL still isn't documented anywhere in this
+ * codebase, so this remains a reasoned default, not a measured number.
  */
-const NEAR_END_THRESHOLD_SEC = 180;
+const NEAR_END_THRESHOLD_SEC = 30;
 
 /**
  * Real regression report right after shipping the "Testing sources…"
@@ -531,6 +543,16 @@ export function PlaybackControls({
   // sources panel only hid it visually and the loop would just force it
   // back open on its next failure regardless.
   const abortRef = useRef<AbortController | null>(null);
+  // Real report: an auto-retry to a new source MID-SESSION (e.g. a real
+  // playback error a while into watching, not the initial resolve) was
+  // seeking the newly-attached source back to `resumePositionSec` — a
+  // page-load-time prop from the LAST time this title was opened, not
+  // wherever the viewer actually was when the retry happened. Updated on
+  // every onProgress tick so a retry always resumes from the most
+  // recently known live position instead; falls back to the real
+  // resumePositionSec prop only for the very first attach, before any
+  // progress has been reported yet.
+  const lastKnownPositionRef = useRef<number | undefined>(resumePositionSec);
   // Separate from abortRef: the background next-episode prefetch (see
   // resolveNextEpisodePrefetch) is a best-effort task independent of the
   // CURRENT episode's own playback/retry lifecycle — it shouldn't be
@@ -749,10 +771,17 @@ export function PlaybackControls({
     const controller = new AbortController();
     prefetchAbortRef.current = controller;
 
+    // concurrency: 1, not RESOLVE_POOL_CONCURRENCY — this runs in the
+    // background while the CURRENT episode is still actively streaming
+    // from the same debrid account; no user is waiting on it, so there's
+    // no reason to add a second concurrent request on top of whatever
+    // the live stream is already doing. See NEAR_END_THRESHOLD_SEC's doc
+    // comment for the real report this (and its shrunk trigger window)
+    // was added for.
     const ranked = applyPlaybackPrefs(candidates, playbackPrefs).streams.slice(0, 2);
     const { winner } = await racePool<StremioStream, ResolveResponse>({
       candidates: ranked,
-      concurrency: 2,
+      concurrency: 1,
       signal: controller.signal,
       resolveOne: async (stream, _i, signal) => {
         try {
@@ -1049,6 +1078,7 @@ export function PlaybackControls({
                   onPlaybackReady={() => setSourceReady(true)}
                   onConfirmedWorking={handleConfirmedWorking}
                   onProgress={(positionSec, durationSec) => {
+                    lastKnownPositionRef.current = positionSec;
                     reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
                     if (
                       !hasTriggeredPrefetchResolve.current &&
@@ -1060,7 +1090,7 @@ export function PlaybackControls({
                       void resolveNextEpisodePrefetch();
                     }
                   }}
-                  startPositionSec={resumePositionSec}
+                  startPositionSec={lastKnownPositionRef.current}
                   onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
                 />
               </>
