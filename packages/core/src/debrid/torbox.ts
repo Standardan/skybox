@@ -41,6 +41,7 @@ interface TbTorrentInfo {
   hash: string;
   download_finished: boolean;
   download_present: boolean;
+  download_state?: string;
   files: TbTorrentFile[];
 }
 
@@ -59,9 +60,20 @@ async function tbFetch<T>(url: string, auth: DebridAuth, init: RequestInit = {})
   return envelope.data;
 }
 
+export interface TorboxClientOptions {
+  /** Injectable so tests can drive waitForDownload's poll loop without sleeping in real time — same pattern as oauth.ts's pollForToken. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
 export class TorboxClient implements DebridClient {
   readonly provider = "torbox";
   readonly authMethod = "apikey";
+
+  private readonly sleep: (ms: number) => Promise<void>;
+
+  constructor(options: TorboxClientOptions = {}) {
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
 
   async connectWithApiKey(apiKey: string): Promise<DebridAuth> {
     const auth: DebridAuth = { provider: "torbox", accessToken: apiKey };
@@ -107,16 +119,47 @@ export class TorboxClient implements DebridClient {
     throw new Error("TorBox does not support resolving direct hoster links, only magnets/torrents.");
   }
 
+  /**
+   * Two real robustness gaps here, found from a live report of TorBox
+   * torrents that had actually finished (confirmed in the TorBox
+   * dashboard) getting treated as failed and skipped anyway:
+   *
+   * 1. TorBox's own published SDKs type `mylist`'s response as always an
+   *    array of torrents, even when filtered with `?id=` — the API docs
+   *    don't give a concrete example either way (this integration was
+   *    built from docs alone, never against a real account until now).
+   *    Reading a single-object shape off an array silently makes
+   *    `download_finished`/`download_present` undefined forever, which
+   *    is indistinguishable from "still downloading" until this loop
+   *    times out. Handling both shapes removes the ambiguity entirely
+   *    instead of betting on which one is right.
+   * 2. A transient error on ONE poll (e.g. the torrent not visible yet in
+   *    `mylist` in the moment right after `createtorrent`, before it's
+   *    propagated) used to kill the whole resolve attempt immediately —
+   *    exactly what "gave up too fast, even though it actually would
+   *    have worked" looks like. Now only a transient failure on the
+   *    LAST attempt is treated as real; every earlier one just keeps
+   *    polling, same as an ordinary "not ready yet" response.
+   */
   private async waitForDownload(auth: DebridAuth, torrentId: number): Promise<TbTorrentInfo> {
     const intervalMs = 3_000;
     const maxAttempts = 60;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const info = await tbFetch<TbTorrentInfo>(`${TORBOX_API_BASE}/torrents/mylist?id=${torrentId}`, auth);
-      if (info.download_finished || info.download_present) {
+      let info: TbTorrentInfo | undefined;
+      try {
+        const raw = await tbFetch<TbTorrentInfo | TbTorrentInfo[]>(
+          `${TORBOX_API_BASE}/torrents/mylist?id=${torrentId}`,
+          auth,
+        );
+        info = Array.isArray(raw) ? (raw.find((t) => t.id === torrentId) ?? raw[0]) : raw;
+      } catch (err) {
+        if (attempt === maxAttempts - 1) throw err;
+      }
+      if (info && (info.download_finished || info.download_present)) {
         return info;
       }
       if (attempt < maxAttempts - 1) {
-        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+        await this.sleep(intervalMs);
       }
     }
     throw new Error(`Timed out waiting for TorBox torrent ${torrentId} to finish downloading`);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { aggregateStreams } from "./aggregate.js";
+import { aggregateStreams, hasLikelyIncompatibleAudio } from "./aggregate.js";
 import type { AddonRef, StremioManifest, StremioStream } from "../shared/types.js";
 
 function jsonResponse(body: unknown) {
@@ -177,5 +177,43 @@ describe("aggregateStreams", () => {
 
     expect(result).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers browser-playable audio as a tiebreaker when cached status and resolution are equal", async () => {
+    const streams: StremioStream[] = [
+      { name: "A", title: "[RD+] Movie.2024.1080p.BluRay.DTS-HD.MA.x264-GROUP", url: "https://x.example/dts" },
+      { name: "B", title: "[RD+] Movie.2024.1080p.BluRay.AAC2.0.x264-GROUP", url: "https://x.example/aac" },
+    ];
+    const fetchMock = vi.fn(async () => jsonResponse({ streams }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await aggregateStreams([TORRENTIO], "movie", "tt0000000");
+
+    // Both [RD+] and both 1080p — same rank until the audio tiebreaker,
+    // which should put the AAC release (browser-decodable) first even
+    // though it appeared second in the raw addon response.
+    expect(result[0]?.url).toBe("https://x.example/aac");
+    expect(result[1]?.url).toBe("https://x.example/dts");
+  });
+});
+
+describe("hasLikelyIncompatibleAudio", () => {
+  it.each([
+    "Movie.2024.1080p.BluRay.DTS-HD.MA.x264-GROUP",
+    "Movie.2024.2160p.UHD.BluRay.TrueHD.7.1.Atmos.x265-GROUP",
+    "Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP",
+    "Movie.2024.720p.WEBRip.AC3.5.1.x264-GROUP",
+    "Movie.2024.1080p.WEB-DL.EAC3.x264-GROUP",
+  ])("flags %s", (title) => {
+    expect(hasLikelyIncompatibleAudio({ title } as StremioStream)).toBe(true);
+  });
+
+  it.each([
+    "Movie.2024.1080p.WEBRip.AAC2.0.x264-GROUP",
+    "Movie.2024.720p.WEB-DL.AAC.x264-GROUP",
+    "Movie.2024.1080p.BluRay.FLAC.x264-GROUP",
+    "Movie.2024.1080p.WEB-DL.MP3.x264-GROUP",
+  ])("does not flag %s", (title) => {
+    expect(hasLikelyIncompatibleAudio({ title } as StremioStream)).toBe(false);
   });
 });

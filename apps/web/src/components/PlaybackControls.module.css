@@ -175,3 +175,18 @@
   width: 100%;
   max-width: 1600px;
 }
+
+.audioWarning {
+  color: var(--danger);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.audioWarningBanner {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--danger) 18%, var(--surface));
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+}

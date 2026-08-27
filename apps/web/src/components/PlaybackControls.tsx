@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { isCached, detectResolution } from "@skybox/core/addon-client";
+import { isCached, detectResolution, hasLikelyIncompatibleAudio } from "@skybox/core/addon-client";
 import type { MediaType, PlaybackPrefs, StremioStream } from "@skybox/core/shared";
 import { Player, type PlayerSource } from "@/components/Player";
 import styles from "./PlaybackControls.module.css";
@@ -258,7 +258,15 @@ export function PlaybackControls({
                   key={stream.url ?? `${stream.infoHash ?? "stream"}:${stream.fileIdx ?? index}`}
                   className={index === playingIndex ? `${styles.sourceRow} ${styles.active}` : styles.sourceRow}
                 >
-                  <span className={styles.sourceText}>{streamLabel(stream)}</span>
+                  <span className={styles.sourceText}>
+                    {streamLabel(stream)}
+                    {hasLikelyIncompatibleAudio(stream) && (
+                      <span className={styles.audioWarning} title="This release's audio format (DTS/AC3/TrueHD/Atmos) usually can't be played by a browser — video may be silent.">
+                        {" "}
+                        ⚠ audio may not play
+                      </span>
+                    )}
+                  </span>
                   <button
                     type="button"
                     className={styles.sourcePlay}
@@ -277,6 +285,13 @@ export function PlaybackControls({
       {playerSource && (
         <div className={styles.playerOverlay}>
           <div className={styles.playerFrame}>
+            {playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!) && (
+              <p className={styles.audioWarningBanner} role="status">
+                No sound? This release&rsquo;s audio format (DTS/AC3/TrueHD/Atmos) usually can&rsquo;t be played by a
+                browser — the video itself is fine. Try a different source from &ldquo;All sources&rdquo; labeled AAC
+                for audio that actually plays.
+              </p>
+            )}
             <Player
               source={playerSource}
               title={title}
