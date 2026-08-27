@@ -767,6 +767,27 @@ export function PlaybackControls({
     const candidates = await prefetchNextEpisodeStreams();
     if (candidates.length === 0) return;
 
+    // Real report: "I was successfully watching this episode... and then
+    // all of a sudden I got the testing sources screen and it put the
+    // episode back to the beginning." Root cause: season-pack releases
+    // (very common for TV) share ONE infoHash across every episode,
+    // distinguished only by fileIdx — so the next episode's top candidate
+    // can be the SAME torrent currently being actively streamed. Resolving
+    // it again (add/select-file/unrestrict, the full chain, every single
+    // time — see resolveDebridSource) is a second, concurrent debrid
+    // operation against a torrent already mid-stream, something this app
+    // never did before this prefetch feature existed. Whatever the
+    // provider does internally in response (re-verification, a link
+    // rotation, anything) is outside this codebase's control, so the safe
+    // fix is to never attempt it: skip any candidate sharing the currently
+    // -playing source's infoHash entirely, even if that means this
+    // specific episode transition doesn't get a prefetch.
+    const currentInfoHash = playingIndex !== null ? streams[playingIndex]?.infoHash?.toLowerCase() : undefined;
+    const eligible = currentInfoHash
+      ? candidates.filter((c) => c.infoHash?.toLowerCase() !== currentInfoHash)
+      : candidates;
+    if (eligible.length === 0) return;
+
     prefetchAbortRef.current?.abort();
     const controller = new AbortController();
     prefetchAbortRef.current = controller;
@@ -778,7 +799,7 @@ export function PlaybackControls({
     // the live stream is already doing. See NEAR_END_THRESHOLD_SEC's doc
     // comment for the real report this (and its shrunk trigger window)
     // was added for.
-    const ranked = applyPlaybackPrefs(candidates, playbackPrefs).streams.slice(0, 2);
+    const ranked = applyPlaybackPrefs(eligible, playbackPrefs).streams.slice(0, 2);
     const { winner } = await racePool<StremioStream, ResolveResponse>({
       candidates: ranked,
       concurrency: 1,
@@ -808,7 +829,31 @@ export function PlaybackControls({
         sourceIdentity: sourceIdentity(winningStream),
       });
     }
-  }, [nextVideoId, prefetchNextEpisodeStreams, playbackPrefs, metaId]);
+  }, [nextVideoId, prefetchNextEpisodeStreams, playbackPrefs, metaId, playingIndex, streams]);
+
+  // A stable identity, not an inline arrow in the JSX — Player.tsx's own
+  // progress-interval effect depends on this exact prop ([onProgress]),
+  // so a fresh closure every render would tear that effect down and
+  // rebuild it on every PlaybackControls re-render, not just when
+  // something progress-relevant actually changes. Not confirmed as the
+  // cause of any specific incident, but a real latent instability worth
+  // closing off regardless.
+  const handleProgress = useCallback(
+    (positionSec: number, durationSec: number) => {
+      lastKnownPositionRef.current = positionSec;
+      reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
+      if (
+        !hasTriggeredPrefetchResolve.current &&
+        nextVideoId &&
+        durationSec > 0 &&
+        durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
+      ) {
+        hasTriggeredPrefetchResolve.current = true;
+        void resolveNextEpisodePrefetch();
+      }
+    },
+    [metaId, mediaType, videoId, nextVideoId, resolveNextEpisodePrefetch],
+  );
 
   const handleNextEpisode = useCallback(() => {
     if (!nextVideoId) return;
@@ -1077,19 +1122,7 @@ export function PlaybackControls({
                   expectedRuntimeMinutes={expectedRuntimeMinutes}
                   onPlaybackReady={() => setSourceReady(true)}
                   onConfirmedWorking={handleConfirmedWorking}
-                  onProgress={(positionSec, durationSec) => {
-                    lastKnownPositionRef.current = positionSec;
-                    reportProgress(metaId, mediaType, videoId, positionSec, durationSec);
-                    if (
-                      !hasTriggeredPrefetchResolve.current &&
-                      nextVideoId &&
-                      durationSec > 0 &&
-                      durationSec - positionSec <= NEAR_END_THRESHOLD_SEC
-                    ) {
-                      hasTriggeredPrefetchResolve.current = true;
-                      void resolveNextEpisodePrefetch();
-                    }
-                  }}
+                  onProgress={handleProgress}
                   startPositionSec={lastKnownPositionRef.current}
                   onEnded={() => nextVideoId && setShowNextEpisodePrompt(true)}
                 />
