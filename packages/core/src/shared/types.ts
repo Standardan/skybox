@@ -108,6 +108,14 @@ export interface UiPrefs {
   railOrder: string[];
   hiddenRails: string[];
   sportsFirst: boolean;
+  /**
+   * IANA zone name (e.g. "America/New_York"), used to format every game/
+   * program clock time — see shared/format-time.ts. Defaults to "UTC"
+   * until set; a client-side effect (TimezoneAutoDetect) saves the
+   * viewer's real browser zone here automatically the first time nobody's
+   * ever set it, without needing a Settings visit first.
+   */
+  timezone: string;
 }
 
 /** REQUIREMENTS F1/B5: how "best source" is chosen when multiple streams are available. */

@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 import { getContinueWatching } from "@skybox/core/library";
 import type { AddonRef, Game } from "@skybox/core/shared";
+import { formatClockTime } from "@skybox/core/shared";
 import { TopNav } from "@/components/TopNav";
+import { TimezoneAutoDetect } from "@/components/TimezoneAutoDetect";
 import { Hero } from "@/components/Hero";
 import { Rail } from "@/components/Rail";
 import { MediaCard, type MediaCardGame } from "@/components/MediaCard";
@@ -24,10 +26,10 @@ export const dynamic = "force-dynamic";
 
 const CATALOG_ID = "top"; // confirmed against Cinemeta's live manifest — see CatalogBrowse.tsx
 
-function formatClock(game: Game): string {
+function formatClock(game: Game, timezone: string): string {
   if (game.status === "live") return "LIVE";
   if (game.status === "final") return "FINAL";
-  return new Date(game.startTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatClockTime(game.startTime, timezone);
 }
 
 function formatScore(game: Game, spoilerFree: boolean): string | undefined {
@@ -36,7 +38,12 @@ function formatScore(game: Game, spoilerFree: boolean): string | undefined {
   return `${game.score.away}-${game.score.home}`;
 }
 
-function toCardGame(game: Game, channelNameById: Map<string, string>, spoilerFree: boolean): MediaCardGame {
+function toCardGame(
+  game: Game,
+  channelNameById: Map<string, string>,
+  spoilerFree: boolean,
+  timezone: string,
+): MediaCardGame {
   const topMatch = game.matchedChannels[0];
   const channel = topMatch ? channelNameById.get(topMatch.channelId) : undefined;
   return {
@@ -45,7 +52,7 @@ function toCardGame(game: Game, channelNameById: Map<string, string>, spoilerFre
     home: game.home.name,
     away: game.away.name,
     state: game.status,
-    clock: formatClock(game),
+    clock: formatClock(game, timezone),
     channel: channel ?? "No channel match",
     score: formatScore(game, spoilerFree),
   };
@@ -130,11 +137,12 @@ export default async function HomePage() {
     const channelNameById = new Map(snapshot.channels.map((c) => [c.id, c.name]));
     todaysGames = games
       .slice(0, HOME_GAMES_LIMIT)
-      .map((game) => toCardGame(game, channelNameById, config.sports.spoilerFree));
+      .map((game) => toCardGame(game, channelNameById, config.sports.spoilerFree, config.ui.timezone));
   }
 
   return (
     <>
+      <TimezoneAutoDetect currentTimezone={config.ui.timezone} />
       <TopNav />
       <main>
         {featured && (

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { formatClockTime } from "@skybox/core/shared";
 import { TopNav } from "@/components/TopNav";
 import { GameStateChip } from "@/components/GameStateChip";
 import { getTodaysMatchedGames } from "@/lib/sports-server";
@@ -14,10 +15,10 @@ export const fetchCache = "default-no-store";
 // Real, per-viewer, frequently-changing data — never statically prerendered.
 export const dynamic = "force-dynamic";
 
-function formatClock(status: "upcoming" | "live" | "final", startTime: number): string {
+function formatClock(status: "upcoming" | "live" | "final", startTime: number, timezone: string): string {
   if (status === "live") return "LIVE";
   if (status === "final") return "FINAL";
-  return new Date(startTime).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return formatClockTime(startTime, timezone);
 }
 
 /**
@@ -74,7 +75,7 @@ export default async function GameDetailPage({ params }: { params: Promise<{ gam
 
         <GameStateChip
           state={game.status}
-          clock={formatClock(game.status, game.startTime)}
+          clock={formatClock(game.status, game.startTime, config.ui.timezone)}
           score={showScore && game.score ? `${game.score.away}-${game.score.home}` : undefined}
         />
 

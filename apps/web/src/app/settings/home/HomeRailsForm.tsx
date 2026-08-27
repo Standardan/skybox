@@ -2,9 +2,12 @@
 
 import { useState } from "react";
 import type { UiPrefs } from "@skybox/core/shared";
+import { listTimezones } from "@skybox/core/shared";
 import { SettingsRow, Switch } from "@/components/SettingsRow";
-import { moveRail, setRailVisible, setSportsFirst } from "./actions";
+import { moveRail, setRailVisible, setSportsFirst, setTimezone } from "./actions";
 import styles from "../settings.module.css";
+
+const TIMEZONES = listTimezones();
 
 const RAIL_LABELS: Record<string, string> = {
   "today-games": "Today's Games",
@@ -26,6 +29,24 @@ export function HomeRailsForm({ initialUi }: { initialUi: UiPrefs }) {
     <>
       <section className={styles.section}>
         <div className={styles.panel}>
+          <SettingsRow
+            label="Time zone"
+            htmlFor="ui-timezone"
+            hint="Used for every game/program time shown in Skybox (Today's Games, Sports, the live guide). Detected automatically from your browser the first time you visit — change it here if that's wrong, or if you want times shown in a different zone."
+          >
+            <select
+              id="ui-timezone"
+              className={styles.input}
+              value={ui.timezone}
+              onChange={async (e) => setUi(await setTimezone(e.target.value))}
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+          </SettingsRow>
           <SettingsRow
             label="Sports-first layout"
             htmlFor="sports-first"

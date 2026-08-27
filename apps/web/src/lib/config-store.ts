@@ -35,6 +35,7 @@ function defaultConfig(): Config {
       railOrder: ["today-games", "continue-watching", "favorite-channels", "popular-movies", "popular-series"],
       hiddenRails: [],
       sportsFirst: true,
+      timezone: "UTC",
     },
     playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
   };
@@ -90,8 +91,9 @@ export async function readConfig(): Promise<Config> {
       ...existing,
       playback: { ...defaults.playback, ...existing.playback },
       sports: { ...defaults.sports, ...existing.sports },
+      ui: { ...defaults.ui, ...existing.ui },
     };
-    if (!existing.playback || !existing.sports?.teamChannelHints) await writeConfig(merged);
+    if (!existing.playback || !existing.sports?.teamChannelHints || !existing.ui?.timezone) await writeConfig(merged);
     return merged;
   }
 

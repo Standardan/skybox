@@ -220,7 +220,7 @@ describe("integration: config + library round-trip through sync encryption", () 
         channelOverrides: { "game-1": "ch-espn-hd" },
         teamChannelHints: {},
       },
-      ui: { railOrder: ["sports", "continue-watching"], hiddenRails: [], sportsFirst: true },
+      ui: { railOrder: ["sports", "continue-watching"], hiddenRails: [], sportsFirst: true, timezone: "UTC" },
       playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
     };
     const library: LibraryItem[] = [

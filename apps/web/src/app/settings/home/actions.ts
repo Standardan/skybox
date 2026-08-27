@@ -30,3 +30,8 @@ export async function setSportsFirst(sportsFirst: boolean): Promise<UiPrefs> {
   const config = await updateConfig((c) => ({ ...c, ui: { ...c.ui, sportsFirst } }));
   return config.ui;
 }
+
+export async function setTimezone(timezone: string): Promise<UiPrefs> {
+  const config = await updateConfig((c) => ({ ...c, ui: { ...c.ui, timezone } }));
+  return config.ui;
+}

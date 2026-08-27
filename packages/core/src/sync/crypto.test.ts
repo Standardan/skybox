@@ -44,6 +44,7 @@ function sampleBundle(): SyncBundle {
         railOrder: ["continue-watching", "sports"],
         hiddenRails: [],
         sportsFirst: true,
+        timezone: "UTC",
       },
       playback: { preferCached: true, preferredResolution: "any", preferredLanguage: "any" },
     },
