@@ -231,6 +231,7 @@ describe("hasLikelyHevcVideo", () => {
     "Movie.2026.2160p.4K.WEB.x265.10bit.AAC5.1-[GROUP]",
     "Movie.2026.1080p.BluRay.H.265-GROUP",
     "Movie.2026.1080p.BluRay.H265-GROUP",
+    "Movie 2026 2160p iT WEB-DL DDP5 1 Atmos DV HDR H 265-GROUP", // real release seen in the wild — space, not a dot
     "Movie.2026.2160p.HEVC.10bit-GROUP",
   ])("flags %s", (title) => {
     expect(hasLikelyHevcVideo({ title } as StremioStream)).toBe(true);

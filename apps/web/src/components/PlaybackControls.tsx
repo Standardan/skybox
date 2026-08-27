@@ -165,6 +165,27 @@ interface ResolveResponse {
   retryable?: boolean;
 }
 
+/**
+ * Real report: "it cycled until it got to one it was stuck resolving on
+ * and couldn't get past it." TorBox (and debrid providers generally) can
+ * poll internally for a couple minutes waiting for a torrent to finish
+ * caching before giving up (packages/core/src/debrid/torbox.ts's
+ * waitForDownload — up to 60 attempts × 3s, a genuinely reasonable
+ * server-side patience for a slow-but-real download) — but the auto-
+ * retry loop below awaits each source SEQUENTIALLY, so one source that
+ * never finishes caching (few/no seeders) blocks the entire loop for
+ * however long the server is willing to wait, with nothing on the
+ * client side ever giving up on its own. `signal` (aborted when the
+ * caller moves to a genuinely different playIndex call, e.g. the user
+ * picks another source manually) doesn't help here — that's a later
+ * action that can never happen while THIS same await is what's stuck.
+ * RESOLVE_TIMEOUT_MS bounds a single source's resolve attempt
+ * independently of both the server's own patience and any outer signal,
+ * so the loop can always move on to the next candidate within a bounded
+ * time — most legitimate resolves finish in well under this regardless.
+ */
+const RESOLVE_TIMEOUT_MS = 45_000;
+
 async function resolveStream(stream: StremioStream, signal: AbortSignal): Promise<ResolveResponse> {
   const res = await fetch("/api/resolve-stream", {
     method: "POST",
@@ -179,7 +200,7 @@ async function resolveStream(stream: StremioStream, signal: AbortSignal): Promis
       title: stream.title,
       name: stream.name,
     }),
-    signal,
+    signal: AbortSignal.any([signal, AbortSignal.timeout(RESOLVE_TIMEOUT_MS)]),
   });
   return (await res.json()) as ResolveResponse;
 }

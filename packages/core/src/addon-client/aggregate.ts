@@ -75,9 +75,11 @@ export function hasLikelyUnplayableContainerHint(stream: StremioStream): boolean
  * targets: 4K/HDR/Dolby-Vision releases (near-universally HEVC, since
  * H.264 doesn't carry HDR10/DV metadata well) coming up as a black
  * screen with a MediaError METADATA code in Firefox specifically, across
- * every source tried regardless of container.
+ * every source tried regardless of container. `h[\s.]?265` (not just
+ * `h\.?265`) after a real release seen in the wild tagged
+ * "H 265-GROUP" — a space, not a dot or nothing, between "H" and "265".
  */
-const LIKELY_HEVC_PATTERN = /\b(?:x265|h\.?265|hevc|hvc1|hev1)\b/i;
+const LIKELY_HEVC_PATTERN = /\b(?:x265|h[\s.]?265|hevc|hvc1|hev1)\b/i;
 
 /** Exported so UI layers can warn/deprioritize using the exact same detection — see LIKELY_HEVC_PATTERN. */
 export function hasLikelyHevcVideo(stream: StremioStream): boolean {
