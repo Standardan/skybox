@@ -11,7 +11,8 @@
 
 .seasonTab {
   appearance: none;
-  text-decoration: none;
+  border: none;
+  cursor: pointer;
   white-space: nowrap;
   flex: 0 0 auto;
   display: inline-flex;
@@ -45,15 +46,18 @@
   max-width: 720px;
 }
 
+/* The <li> — hosts the select-button (episode number/title, most of the
+   row's width) and the small inline Play button as siblings. Real feature
+   request: "the play button should be in the same box that the episode
+   is" — a button can't nest inside another button, so these are two
+   sibling interactive elements sharing one row, not one link wrapping
+   both. */
 .episodeRow {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  min-height: 44px;
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  text-decoration: none;
   color: var(--text-primary);
 }
 
@@ -64,6 +68,43 @@
 .episodeRowActive {
   outline: 1px solid var(--accent);
   color: var(--text-primary);
+}
+
+.episodeRowSelect {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  background: none;
+  color: inherit;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: 44px;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font: inherit;
+}
+
+.episodeRowPlay {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  margin-right: var(--space-3);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+}
+
+.episodeRowPlay:hover {
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .episodeNumber {
