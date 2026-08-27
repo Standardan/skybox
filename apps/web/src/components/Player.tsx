@@ -179,36 +179,79 @@ export function Player({
    * played" — decodability, not just presence) and Safari/WebKit's
    * legacy `webkitAudioDecodedByteCount` (real decoded-byte count, so
    * still 0 for a track that exists but can't decode). Neither touches
-   * playback in any way — pure readback. Checked a couple seconds after
-   * `playing` so a genuinely fine track has had time to actually decode
-   * some audio first. Reported up via a callback (rather than rendered
-   * here) so it lands in the same banner style as PlaybackControls'
-   * other, filename-driven warnings.
+   * playback in any way — pure readback.
+   *
+   * A single check a couple seconds after `playing` (the first version
+   * of this) still missed a real, confirmed-silent file — a manual
+   * console check on the same file, tens of minutes into playback,
+   * showed `mozHasAudio: false` correctly, meaning the browser did
+   * eventually know, just not within that first couple of seconds. Over
+   * a proxied network stream (this app fetches the real bytes through
+   * /api/stream-proxy, not a local file) the decoder may need more than
+   * a couple seconds of buffered data before it can tell decode is
+   * failing. This now polls periodically instead of checking once,
+   * stopping as soon as it gets a definitive answer either way (real
+   * decoded bytes confirm audio IS fine — no need to keep polling — or
+   * a confirmed-false/zero fires the warning) or after a generous cap.
+   * Reported up via a callback (rather than rendered here) so it lands
+   * in the same banner style as PlaybackControls' other warnings.
    */
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !onNoAudioTrackDetected) return;
 
-    function checkForSilence() {
-      if (!video) return;
-      const v = video as unknown as { mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number };
-      if (typeof v.mozHasAudio === "boolean") {
-        if (!v.mozHasAudio) onNoAudioTrackDetected?.();
-        return;
-      }
-      if (typeof v.webkitAudioDecodedByteCount === "number") {
-        if (v.webkitAudioDecodedByteCount === 0) onNoAudioTrackDetected?.();
-      }
+    const POLL_INTERVAL_MS = 2000;
+    const MAX_CHECKS = 15; // ~30s of real playback before giving up either way
+    const CONSECUTIVE_SILENT_TO_FIRE = 2; // debounce against a transient reading right as playback starts
+    let checks = 0;
+    let consecutiveSilent = 0;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
+    function stopPolling() {
+      if (poll) clearInterval(poll);
+      poll = null;
     }
 
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Fires as soon as N consecutive checks agree on silence — whether
+    // that happens on check #2 (settles immediately) or check #12
+    // (settles late, e.g. over a slow proxied stream) — rather than only
+    // ever firing right at the end of the polling window.
+    function checkForSilence() {
+      if (!video) return stopPolling();
+      checks++;
+      const v = video as unknown as { mozHasAudio?: boolean; webkitAudioDecodedByteCount?: number };
+      let silentThisCheck: boolean | null = null;
+      if (typeof v.mozHasAudio === "boolean") {
+        silentThisCheck = !v.mozHasAudio;
+      } else if (typeof v.webkitAudioDecodedByteCount === "number") {
+        silentThisCheck = v.webkitAudioDecodedByteCount === 0;
+      } else {
+        return stopPolling(); // neither property supported (e.g. Chrome) — nothing to poll for
+      }
+
+      if (silentThisCheck) {
+        consecutiveSilent++;
+        if (consecutiveSilent >= CONSECUTIVE_SILENT_TO_FIRE) {
+          onNoAudioTrackDetected?.();
+          stopPolling();
+        }
+      } else {
+        consecutiveSilent = 0; // confirmed real decoded audio — stop suspecting silence
+        stopPolling();
+      }
+      if (checks >= MAX_CHECKS) stopPolling();
+    }
+
     function onPlaying() {
-      timer = setTimeout(checkForSilence, 2000);
+      stopPolling();
+      checks = 0;
+      consecutiveSilent = 0;
+      poll = setInterval(checkForSilence, POLL_INTERVAL_MS);
     }
     video.addEventListener("playing", onPlaying);
     return () => {
       video.removeEventListener("playing", onPlaying);
-      if (timer) clearTimeout(timer);
+      stopPolling();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.url]);
