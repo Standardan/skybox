@@ -61,6 +61,23 @@ interface ResolveSuccess {
 }
 
 /**
+ * Routes the real debrid-CDN URL through /api/stream-proxy instead of
+ * handing it to the browser directly. Confirmed root cause of "resolving
+ * works, but every file — mkv or mp4 — shows a black/frozen screen":
+ * CORS on the debrid CDN is wide open (tested directly, any Origin gets
+ * echoed back), so it isn't that; the presigned link is most likely bound
+ * to the IP that requested it — this server's IP from the resolve step
+ * above, not the end user's browser IP that actually tries to play it.
+ * Fetching the real bytes from THIS server (same IP context that resolved
+ * the link) instead of handing the raw CDN URL to the browser sidesteps
+ * that regardless of the exact mechanism — same idea as the IPTV mixed-
+ * content proxy, applied here for a different reason.
+ */
+function proxiedVideoUrl(rawUrl: string): string {
+  return `/api/stream-proxy?url=${encodeURIComponent(rawUrl)}`;
+}
+
+/**
  * For logging only — never the real URL verbatim. Debrid-resolved URLs
  * routinely carry an account token/API key as a query param (TorBox's
  * requestdl does exactly this), so logging it unredacted would leak a
@@ -132,7 +149,7 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
       console.log(
         `[resolve-stream] resolved "${result.filename}" -> ${redactedUrlForLogging(result.playableUrl)}`,
       );
-      return NextResponse.json({ ok: true, playableUrl: result.playableUrl, filename: result.filename });
+      return NextResponse.json({ ok: true, playableUrl: proxiedVideoUrl(result.playableUrl), filename: result.filename });
     }
 
     // url path: try unrestricting through the debrid provider first; some addons
@@ -149,14 +166,14 @@ export async function POST(request: Request): Promise<NextResponse<ResolveSucces
     if (unrestricted) {
       return NextResponse.json({
         ok: true,
-        playableUrl: unrestricted.playableUrl,
+        playableUrl: proxiedVideoUrl(unrestricted.playableUrl),
         filename: unrestricted.filename,
       });
     }
 
     return NextResponse.json({
       ok: true,
-      playableUrl: url!,
+      playableUrl: proxiedVideoUrl(url!),
       filename: url!.split("/").pop() || "stream",
     });
   } catch (error) {
