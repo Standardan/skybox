@@ -46,7 +46,19 @@ function canBrowserPlayHevc(): boolean {
   const support =
     video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.90"') ||
     video.canPlayType('video/mp4; codecs="hev1.1.6.L93.90"');
-  hevcSupportCache = support === "probably" || support === "maybe";
+  // Real report: a genuinely HEVC-encoded 4K release played through to a
+  // silent black screen on Firefox, with none of the HEVC warning banners
+  // below ever showing — meaning canPlayType had reported HEVC as
+  // playable. Real Firefox apparently answers "maybe" for the HEVC codec
+  // string it recognizes by name, without confirming an actual decoder
+  // (typically a separate, not-always-installed platform codec pack) is
+  // present — "maybe" is spec'd as the API's lowest-confidence answer,
+  // and evidently not reliable enough to act on here. Only "probably"
+  // (the API's high-confidence answer) is trusted now — asymmetric
+  // on purpose: under-trusting just means an unnecessary "every source
+  // is HEVC" fallback/banner for a browser that could actually play it,
+  // over-trusting means exactly the silent black screen this fixes.
+  hevcSupportCache = support === "probably";
   return hevcSupportCache;
 }
 
@@ -63,6 +75,12 @@ function canBrowserPlayHevc(): boolean {
  * default here — under-detecting MKV support just means an unnecessary
  * remux round-trip, while over-detecting it would mean skipping a
  * remux a source actually needed and landing back on a black screen.
+ *
+ * Only "probably" is trusted, not "maybe" — same fix and same real
+ * report as canBrowserPlayHevc() above (a genuinely HEVC-in-MKV 4K
+ * release black-screened on Firefox with canPlayType having answered
+ * "maybe" for the HEVC codec string). "maybe" is documented as this
+ * API's lowest-confidence answer; evidently not reliable enough here.
  */
 let mkvSupportCache: boolean | null = null;
 function canBrowserPlayMkv(): boolean {
@@ -70,7 +88,7 @@ function canBrowserPlayMkv(): boolean {
   if (typeof document === "undefined") return false;
   const video = document.createElement("video");
   const support = video.canPlayType('video/x-matroska; codecs="avc1.42E01E, mp4a.40.2"');
-  mkvSupportCache = support === "probably" || support === "maybe";
+  mkvSupportCache = support === "probably";
   return mkvSupportCache;
 }
 
