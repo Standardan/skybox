@@ -49,14 +49,24 @@ COPY --from=mwader/static-ffmpeg:9.0.1 /ffmpeg /usr/local/bin/ffmpeg
 # verify the debrid CDN's certificate ("SSL routines::certificate verify
 # failed") on every single source, while Node's own fetch() — used by
 # stream-proxy's plain (non-remux) passthrough — succeeded against the
-# exact same URLs seconds later. That split confirms real CA certs exist
-# in this image (Node found them fine); ffmpeg's statically-linked TLS
-# library just wasn't looking in the right place for them. static-ffmpeg
-# is built in its own (non-Debian) environment with its own compiled-in
-# default cert path, which doesn't necessarily match where node:22-slim
-# (Debian) actually keeps its CA bundle — explicitly pointing both common
-# OpenSSL env vars at the real Debian path sidesteps whatever the
-# binary's own built-in default was.
+# exact same URLs seconds later.
+#
+# Turned out to be two layered problems, confirmed one at a time against
+# the actual running container rather than guessed: pointing OpenSSL at
+# the standard Debian cert path via SSL_CERT_FILE/DIR (below) wasn't
+# enough on its own, because `ls /etc/ssl/certs/ca-certificates.crt`
+# in the real container came back "No such file or directory" — the
+# ca-certificates *package* was never actually installed in node:22-slim
+# to begin with. Node doesn't need it (it bundles its own root CA list
+# compiled into the binary, independent of the OS cert store), so
+# node:22-slim's own upstream Dockerfile never installs it for the
+# runtime image — only Node needed HTTPS during THAT image's own build
+# (downloading the Node tarball), and that step uses curl, not ffmpeg.
+# ffmpeg's OpenSSL has no bundled roots of its own; it always needs a
+# real system cert store to verify anything, so it's installed here
+# explicitly rather than assumed to already exist.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_DIR=/etc/ssl/certs
 # --chown so the unprivileged `skybox` user (below) can actually write into
