@@ -45,15 +45,40 @@ import { getCurrentUser } from "@/lib/session";
  * and nobody is waiting on the response, so swallowing just this one
  * specific, well-understood race is safe.
  *
- * Deliberately a no-op (not a rethrow) for anything that isn't this exact
- * case: `process.on` supports multiple listeners, and whatever Next.js's
- * own uncaughtException handling already does for every OTHER kind of
- * crash keeps running exactly as before — this listener only ever
- * intercepts the one specific, identified race, never anything else.
+ * Real report this SECOND case guards against: after shipping concurrent
+ * source racing (PlaybackControls.tsx's racePool), the client now
+ * routinely aborts an in-flight /api/resolve-stream request for whichever
+ * candidate loses the race — happens on nearly every play, not as a rare
+ * edge case. That client-side abort can surface server-side as an
+ * uncaught `Error: aborted` with `code: "ECONNRESET"`, thrown from deep
+ * inside Node's HTTP internals while a route handler is still mid-flight
+ * (resolving via the debrid provider, or writing the response) — same
+ * "outside any request-scoped try/catch's reach" story as the remux case
+ * above, and same reasoning for why swallowing it is safe: by the time
+ * this fires, the client has already disconnected and nobody is waiting
+ * on that specific response.
+ *
+ * `process.on` is process-global, not scoped to this file's own route —
+ * this listener protects every route in the app (confirmed: this exact
+ * error was observed from /api/resolve-stream requests, not just this
+ * file's own), simply because this module happens to be where it's
+ * registered.
+ *
+ * Deliberately a no-op (not a rethrow) for anything that isn't one of
+ * these two exact, identified cases: `process.on` supports multiple
+ * listeners, and whatever Next.js's own uncaughtException handling
+ * already does for every OTHER kind of crash keeps running exactly as
+ * before — this listener only ever intercepts these two specific races,
+ * never anything else.
  */
 process.on("uncaughtException", (error) => {
   if (error instanceof Error && error.message.includes("Controller is already closed")) {
     console.warn("[stream-proxy] swallowed a benign closed-controller race from an aborted remux", error.message);
+    return;
+  }
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "ECONNRESET" || (error instanceof Error && error.message === "aborted")) {
+    console.warn("[stream-proxy] swallowed a benign aborted-connection error from a cancelled request", error);
   }
 });
 
