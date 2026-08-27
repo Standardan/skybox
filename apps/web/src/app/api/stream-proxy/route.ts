@@ -96,11 +96,21 @@ export async function GET(request: Request) {
   let upstream: Response;
   try {
     upstream = await fetch(target.toString(), { headers: upstreamRequestHeaders, signal: controller.signal });
-  } catch {
+  } catch (error) {
+    console.error(`[stream-proxy] fetch to ${target.hostname} failed`, error);
     return jsonError("Could not reach the debrid provider's CDN.", 502);
   } finally {
     clearTimeout(timer);
   }
+
+  // Logged once per request (not per byte) — cheap, and this is exactly
+  // the "did the proxy even get real video bytes back" signal that was
+  // missing while diagnosing a real black-screen report: confirms
+  // whether upstream is serving the expected content-type/range support
+  // at all, without needing a client-side repro to find out.
+  console.log(
+    `[stream-proxy] ${target.hostname} -> ${upstream.status} ${upstream.headers.get("content-type") ?? "?"} range=${Boolean(range)}`,
+  );
 
   const headers = new Headers();
   for (const key of PASSTHROUGH_RESPONSE_HEADERS) {

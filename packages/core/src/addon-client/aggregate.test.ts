@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   aggregateStreams,
   hasLikelyIncompatibleAudio,
+  hasLikelyHevcVideo,
   isLikelyUnplayableContainer,
   matchesPreferredLanguage,
 } from "./aggregate.js";
@@ -220,6 +221,26 @@ describe("hasLikelyIncompatibleAudio", () => {
     "Movie.2024.1080p.WEB-DL.MP3.x264-GROUP",
   ])("does not flag %s", (title) => {
     expect(hasLikelyIncompatibleAudio({ title } as StremioStream)).toBe(false);
+  });
+});
+
+describe("hasLikelyHevcVideo", () => {
+  it.each([
+    "Movie.2026.2160p.WEB-DL.x265.HDR-DV-GROUP",
+    "Movie.2026.2160p.4K.WEB.x265.10bit.AAC5.1-[GROUP]",
+    "Movie.2026.1080p.BluRay.H.265-GROUP",
+    "Movie.2026.1080p.BluRay.H265-GROUP",
+    "Movie.2026.2160p.HEVC.10bit-GROUP",
+  ])("flags %s", (title) => {
+    expect(hasLikelyHevcVideo({ title } as StremioStream)).toBe(true);
+  });
+
+  it.each([
+    "Movie.2026.1080p.WEBRip.x264-GROUP",
+    "Movie.2026.720p.WEB-DL.H.264-GROUP",
+    "Movie.2026.1080p.BluRay.AVC-GROUP",
+  ])("does not flag %s", (title) => {
+    expect(hasLikelyHevcVideo({ title } as StremioStream)).toBe(false);
   });
 });
 

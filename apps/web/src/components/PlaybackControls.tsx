@@ -5,6 +5,7 @@ import {
   isCached,
   detectResolution,
   hasLikelyIncompatibleAudio,
+  hasLikelyHevcVideo,
   isLikelyUnplayableContainer,
   matchesPreferredLanguage,
   LANGUAGE_OPTIONS,
@@ -20,6 +21,29 @@ interface PlaybackPrefsResult {
 }
 
 /**
+ * Real report this fixes: 4K/HDR/Dolby-Vision releases (near-universally
+ * HEVC/x265, since H.264 doesn't carry that metadata well) resolving fine
+ * but showing a black screen with a MediaError METADATA code — Firefox
+ * ships no HEVC decoder at all outside a narrow set of platform codec
+ * packs, unlike Chrome/Edge/Safari which mostly do. This is a genuine
+ * per-viewer browser fact (not a fixed rule like the audio-codec check),
+ * so it's checked once via the real `canPlayType` API rather than baked
+ * into the framework-free ranking in @skybox/core. Memoized at module
+ * scope — the answer can't change within a single page load.
+ */
+let hevcSupportCache: boolean | null = null;
+function canBrowserPlayHevc(): boolean {
+  if (hevcSupportCache !== null) return hevcSupportCache;
+  if (typeof document === "undefined") return true;
+  const video = document.createElement("video");
+  const support =
+    video.canPlayType('video/mp4; codecs="hvc1.1.6.L93.90"') ||
+    video.canPlayType('video/mp4; codecs="hev1.1.6.L93.90"');
+  hevcSupportCache = support === "probably" || support === "maybe";
+  return hevcSupportCache;
+}
+
+/**
  * `aggregateStreams` already ranks cached-first-then-resolution by default
  * (matching the `preferCached: true` default). This re-sorts using the same
  * detection when the user's actual saved preference differs — resolution
@@ -31,6 +55,7 @@ interface PlaybackPrefsResult {
  * than silently hiding every source.
  */
 function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): PlaybackPrefsResult {
+  const hevcUnplayable = !canBrowserPlayHevc();
   const sorted = streams
     .map((stream, index) => ({ stream, index }))
     .sort((a, b) => {
@@ -43,6 +68,16 @@ function applyPlaybackPrefs(streams: StremioStream[], prefs: PlaybackPrefs): Pla
         const aCached = Number(!isCached(a.stream));
         const bCached = Number(!isCached(b.stream));
         if (aCached !== bCached) return bCached - aCached; // inverted: uncached first
+      }
+      // Only a tiebreaker, and only when this browser genuinely can't
+      // decode HEVC at all — never overrides cached/resolution/preference
+      // ordering, just picks the source actually likely to play between
+      // two otherwise-equal candidates instead of letting the auto-retry
+      // loop grind through several HEVC releases in a row first.
+      if (hevcUnplayable) {
+        const aHevc = Number(hasLikelyHevcVideo(a.stream));
+        const bHevc = Number(hasLikelyHevcVideo(b.stream));
+        if (aHevc !== bHevc) return aHevc - bHevc;
       }
       return a.index - b.index;
     })
@@ -149,6 +184,10 @@ export function PlaybackControls({
     () => applyPlaybackPrefs(rawStreams, playbackPrefs),
     [rawStreams, playbackPrefs],
   );
+  // Computed once per mount (the answer can't change mid-session) — gates
+  // the HEVC warning below so a viewer whose browser actually plays HEVC
+  // fine (Chrome/Edge/Safari, mostly) never sees it.
+  const hevcUnplayable = useMemo(() => !canBrowserPlayHevc(), []);
 
   /**
    * A single source's *resolve* step (not playback) failing — e.g. a debrid
@@ -305,6 +344,12 @@ export function PlaybackControls({
                         ⚠ audio may not play
                       </span>
                     )}
+                    {hevcUnplayable && hasLikelyHevcVideo(stream) && (
+                      <span className={styles.audioWarning} title="This release is HEVC/x265 video, which this browser can't decode — it likely won't play at all.">
+                        {" "}
+                        ⚠ video may not play
+                      </span>
+                    )}
                   </span>
                   <button
                     type="button"
@@ -330,6 +375,14 @@ export function PlaybackControls({
                 container — resolving worked and the file is real, but browsers can&rsquo;t play that container
                 directly, so nothing loads. This isn&rsquo;t a Skybox bug to keep retrying past. Try a different
                 source from &ldquo;All sources&rdquo; — an MP4/WEBRip release is more likely to actually play.
+              </p>
+            )}
+            {hevcUnplayable && playingIndex !== null && streams[playingIndex] && hasLikelyHevcVideo(streams[playingIndex]!) && (
+              <p className={styles.audioWarningBanner} role="status">
+                Black or frozen screen? This release is encoded in HEVC/x265 video, which this browser can&rsquo;t
+                decode at all — very common for 4K/HDR/Dolby Vision releases. This isn&rsquo;t a Skybox bug to keep
+                retrying past. Try a different source from &ldquo;All sources&rdquo; (look for x264/H.264/AVC
+                instead), or open Skybox in Chrome, Edge, or Safari, which can usually play HEVC.
               </p>
             )}
             {playingIndex !== null && streams[playingIndex] && hasLikelyIncompatibleAudio(streams[playingIndex]!) && (

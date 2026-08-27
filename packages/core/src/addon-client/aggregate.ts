@@ -41,6 +41,28 @@ export function isLikelyUnplayableContainer(filename: string): boolean {
   return ext ? UNPLAYABLE_CONTAINER_EXTENSIONS.has(ext) : false;
 }
 
+/**
+ * Release-title hints for HEVC/H.265 video. Unlike the audio codecs and
+ * containers above, this isn't universally unplayable — Chrome, Edge, and
+ * Safari all decode HEVC (via hardware or, in recent Chrome, software)
+ * on most systems. Firefox is the real holdout: it ships no HEVC decoder
+ * at all outside a narrow set of platform codec packs, so this is a
+ * per-viewer browser-capability question, not a fixed rule — which is
+ * why (unlike hasLikelyIncompatibleAudio) this isn't wired into
+ * rankStreams below; the caller combines it with an actual
+ * canPlayType() check for the viewer's own browser. Real report this
+ * targets: 4K/HDR/Dolby-Vision releases (near-universally HEVC, since
+ * H.264 doesn't carry HDR10/DV metadata well) coming up as a black
+ * screen with a MediaError METADATA code in Firefox specifically, across
+ * every source tried regardless of container.
+ */
+const LIKELY_HEVC_PATTERN = /\b(?:x265|h\.?265|hevc|hvc1|hev1)\b/i;
+
+/** Exported so UI layers can warn/deprioritize using the exact same detection — see LIKELY_HEVC_PATTERN. */
+export function hasLikelyHevcVideo(stream: StremioStream): boolean {
+  return LIKELY_HEVC_PATTERN.test(streamText(stream));
+}
+
 export interface LanguageOption {
   code: string;
   label: string;
