@@ -30,6 +30,24 @@ function byStartAsc(a: EpgProgramme, b: EpgProgramme): number {
   return a.start - b.start;
 }
 
+/**
+ * The channel-list side of this (Xtream's `epg_channel_id` on each
+ * channel) and the EPG-feed side (the XMLTV `<channel id>` a programme is
+ * bucketed under) are maintained by the provider as two loosely-related
+ * data sources, not one — real-world reports of "the guide doesn't
+ * populate for a lot of channels" trace back to trivial casing/whitespace
+ * differences between the two for what's obviously the same channel
+ * (e.g. "ESPN.us" vs "espn.us"), which an exact Map key match silently
+ * treats as two unrelated channels. Normalizing both sides the same way
+ * at every lookup/insert removes that whole class of avoidable miss —
+ * it doesn't fix a channel with genuinely no EPG data at all (still a
+ * real, expected gap for some providers), only ones that DO have the
+ * data under a differently-cased id.
+ */
+function normalizeChannelId(id: string): string {
+  return id.trim().toLowerCase();
+}
+
 export class InMemoryEpgStore implements EpgStore {
   private readonly channels = new Map<string, EpgProgramme[]>();
 
@@ -38,11 +56,12 @@ export class InMemoryEpgStore implements EpgStore {
 
     const byChannel = new Map<string, EpgProgramme[]>();
     for (const programme of programmes) {
-      const bucket = byChannel.get(programme.channelId);
+      const key = normalizeChannelId(programme.channelId);
+      const bucket = byChannel.get(key);
       if (bucket) {
         bucket.push(programme);
       } else {
-        byChannel.set(programme.channelId, [programme]);
+        byChannel.set(key, [programme]);
       }
     }
 
@@ -61,7 +80,7 @@ export class InMemoryEpgStore implements EpgStore {
   }
 
   getNowNext(channelId: string, at: number = Date.now()): EpgNowNext {
-    const list = this.channels.get(channelId);
+    const list = this.channels.get(normalizeChannelId(channelId));
     if (!list || list.length === 0) {
       return { now: null, next: null };
     }
@@ -83,7 +102,7 @@ export class InMemoryEpgStore implements EpgStore {
   }
 
   getProgrammesForChannel(channelId: string, from: number, to: number): EpgProgramme[] {
-    const list = this.channels.get(channelId);
+    const list = this.channels.get(normalizeChannelId(channelId));
     if (!list) return [];
     return list.filter((p) => p.stop > from && p.start < to);
   }

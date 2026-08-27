@@ -158,4 +158,35 @@ describe("InMemoryEpgStore", () => {
       expect(store.getProgrammesForChannel("ch1", 0, 10_000)).toEqual([]);
     });
   });
+
+  describe("channel id normalization", () => {
+    // Real report this covers: "the guide doesn't populate for a lot of
+    // channels" -- the Xtream channel list's epg_channel_id and the XMLTV
+    // feed's <channel id> are two separately-maintained data sources that
+    // can disagree on casing/whitespace for what's obviously the same
+    // channel, and an exact-match lookup silently treated that as "no EPG
+    // for this channel" instead of finding the real data.
+    it("matches a differently-cased channel id between ingest and lookup", () => {
+      const store = new InMemoryEpgStore();
+      store.addProgrammes([programme({ channelId: "ESPN.us", title: "Game", start: 1000, stop: 2000 })]);
+
+      expect(store.getNowNext("espn.us", 1500).now?.title).toBe("Game");
+      expect(store.getProgrammesForChannel("Espn.US", 0, 10_000)).toHaveLength(1);
+    });
+
+    it("matches a channel id with incidental surrounding whitespace", () => {
+      const store = new InMemoryEpgStore();
+      store.addProgrammes([programme({ channelId: " ch1 ", title: "Game", start: 1000, stop: 2000 })]);
+
+      expect(store.getNowNext("ch1", 1500).now?.title).toBe("Game");
+    });
+
+    it("still merges two ingests of the same channel under different casing into one bucket", () => {
+      const store = new InMemoryEpgStore();
+      store.addProgrammes([programme({ channelId: "ch1", title: "A", start: 1000, stop: 2000 })]);
+      store.addProgrammes([programme({ channelId: "CH1", title: "B", start: 2000, stop: 3000 })]);
+
+      expect(store.getProgrammesForChannel("Ch1", 0, 10_000).map((p) => p.title)).toEqual(["A", "B"]);
+    });
+  });
 });
